@@ -8,14 +8,14 @@ de negocio utilizados em todo o dashboard.
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
 Autor: Alex Paulo
-Versao: 0.2.4
+Versao: 0.2.7
 """
 
 # ============================================================================
 # INFORMACOES DO PROJETO
 # ============================================================================
 PROJECT_NAME = "DashID"
-PROJECT_VERSION = "0.2.4"
+PROJECT_VERSION = "0.2.7"
 PROJECT_DESCRIPTION = (
     "Dashboard de analise de performance diaria de lojas da "
     "NSF Cosmeticos e Presentes (Cp Fani)"
@@ -159,7 +159,10 @@ CHANNEL_LABELS = {
 #
 # FORMATO CORRETO da URL (exemplo):
 #   https://didiernsf.sharepoint.com/:x:/s/NSFcosmticosepresentesLTDA/
-#   EajHkR8mT8tNnQm5yZxYwB0Bxyz123?e=AbCdEf
+#   IQAP_RPH98laR7KvkRvgyaUqAYM5B2REUbXMGolJdXTTFHQ?e=JNPga6
+#
+# O dashboard adiciona automaticamente &download=1 para forcar o download
+# direto do arquivo (evita receber pagina HTML).
 #
 # FORMATO INCORRETO (NAO USAR):
 #   {713fd0fc-9f7f-475a-b2af-911be0c9a52a}  <- Isso e um GUID, nao URL!
@@ -170,20 +173,17 @@ SHAREPOINT_CONFIG = {
     # Link de compartilhamento direto do SharePoint
     #
     # COLE AQUI a URL completa copiada do botao "Compartilhar" do SharePoint
-    # A URL deve começar com "https://" e conter "/:x:/" (indica arquivo Excel)
+    # A URL deve comecar com "https://" e conter "/:x:/" (indica arquivo Excel)
     #
-    # Exemplo de URL valida:
-    # "https://didiernsf.sharepoint.com/:x:/s/NSFcosmticosepresentesLTDA/EajHkR8mT8tNnQm5yZxYwB0Bxyz123?e=AbCdEf"
+    # O dashboard ira automaticamente adicionar &download=1 para forcar
+    # o download binario do arquivo (evita pagina HTML de visualizacao).
     #
-    # URL invalida (GUID - NAO funciona):
-    # "{713fd0fc-9f7f-475a-b2af-911be0c9a52a}"
-    #
-    # SUBSTITUA A URL ABAIXO pela URL real do seu arquivo:
+    # URL atual (atualizada com novo token e=JNPga6):
     "SHARE_URL": (
         "https://didiernsf.sharepoint.com/:x:/s/"
         "NSFcosmticosepresentesLTDA/"
         "IQAP_RPH98laR7KvkRvgyaUqAYM5B2REUbXMGolJdXTTFHQ"
-        "?e=gaqRoIPe3kg"
+        "?e=JNPga6"
     ),
 
     # Diretorio local para cache do arquivo
