@@ -1,5 +1,5 @@
 """
-DashID - Módulo de Análise e Cálculo de Indicadores
+DashID - Modulo de Análise e Cálculo de Indicadores
 ====================================================
 
 Responsável por todos os cálculos de negócio, indicadores e análises:
@@ -18,7 +18,7 @@ Responsável por todos os cálculos de negócio, indicadores e análises:
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
 Autor: Alex Paulo
-Versão: 0.2.0
+Versão: 0.3.2
 """
 
 import io
@@ -92,9 +92,18 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
         }
 
     # Índice médio geral do mês (MTD) - média de todos os valores não-NaN
+    # CORREÇÃO: Usar pd.isna() em vez de np.isnan() para compatibilidade
     media_geral = df_stores.values.flatten()
-    media_geral = media_geral[~np.isnan(media_geral)]
-    media_geral = float(np.mean(media_geral)) if len(media_geral) > 0 else 0.0
+    # Converter para float e filtrar NaN de forma segura
+    media_geral_float = []
+    for val in media_geral:
+        try:
+            if pd.notna(val):
+                media_geral_float.append(float(val))
+        except (ValueError, TypeError):
+            pass
+    
+    media_geral = float(np.mean(media_geral_float)) if len(media_geral_float) > 0 else 0.0
 
     # Índice acumulado por loja (média do mês até a última data)
     df_until_last = df_stores.loc[:, df_stores.columns <= last_date]
@@ -217,10 +226,10 @@ def prepare_variation_table(
     if selected_stores:
         df_filtered = df_filtered.loc[df_filtered.index.isin(selected_stores)]
 
-    # Formata como percentual usando map() (Pandas 2.1+)
+    # Formata como percentual
     df_formatted = df_filtered.copy()
     for col in df_formatted.columns:
-        df_formatted[col] = df_formatted[col].map(
+        df_formatted[col] = df_formatted[col].apply(
             lambda x: f"{x*100:.2f}%" if pd.notna(x) else "-"
         )
 
@@ -732,13 +741,20 @@ def calculate_distribution(
 
     # Achata todos os valores não-NaN
     valores = df.values.flatten()
-    valores = valores[~np.isnan(valores)]
-
-    if len(valores) == 0:
+    # Filtra valores não numéricos e NaN de forma segura
+    valores_filtrados = []
+    for val in valores:
+        try:
+            if pd.notna(val):
+                valores_filtrados.append(float(val))
+        except (ValueError, TypeError):
+            pass
+    
+    if len(valores_filtrados) == 0:
         return pd.DataFrame()
 
     # Calcula histograma
-    hist, bin_edges = np.histogram(valores, bins=bins)
+    hist, bin_edges = np.histogram(valores_filtrados, bins=bins)
 
     # Monta DataFrame
     faixas = [f"{bin_edges[i]:.2f} - {bin_edges[i+1]:.2f}" for i in range(len(hist))]
@@ -748,7 +764,7 @@ def calculate_distribution(
         "faixa": faixas,
         "frequencia": hist,
         "frequencia_acumulada": frequencia_acumulada,
-        "percentual": (hist / len(valores)) * 100,
+        "percentual": (hist / len(valores_filtrados)) * 100,
     })
 
     return result
