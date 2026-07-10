@@ -7,8 +7,14 @@ e Presentes (Cp Fani).
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
-Estrutura:
-- Sidebar: upload de arquivo, navegação, filtros
+FLUXO PRINCIPAL:
+- Ao iniciar, tenta baixar automaticamente a planilha do SharePoint
+  (link de compartilhamento direto, cache de 1 hora).
+- Se o SharePoint falhar, mostra erro claro.
+- Upload manual disponível apenas como fallback oculto na sidebar.
+
+ESTRUTURA:
+- Sidebar: info do arquivo, navegação, filtros, fallback de upload
 - Visão Geral: KPIs de topo (cards) com meta 115%
 - Análise Horizontal: variação diária, gráfico de linhas, top movers
 - Análise por Dia da Semana: agrupamento, heatmap, melhor/pior dia
@@ -28,6 +34,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import os
 
 from config import (
     BUSINESS_CONFIG,
@@ -39,10 +46,15 @@ from config import (
     PROJECT_DESCRIPTION,
     PROJECT_NAME,
     PROJECT_VERSION,
+    SHAREPOINT_CONFIG,
     format_meta_info,
 )
 from data_loader import load_data_from_upload
-from sharepoint_connector import check_sharepoint_status, load_data_from_sharepoint
+from sharepoint_connector import (
+    check_sharepoint_status,
+    download_from_sharepoint_link,
+    load_data_from_sharepoint_link,
+)
 from analytics import (
     aggregate_by_channel,
     analyze_by_weekday,
@@ -77,12 +89,45 @@ st.set_page_config(
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # ============================================================================
+# INICIALIZAÇÃO - DOWNLOAD AUTOMÁTICO DO SHAREPOINT
+# ============================================================================
+
+
+@st.cache_data(ttl=SHAREPOINT_CONFIG["CACHE_TTL"], show_spinner=False)
+def auto_load_from_sharepoint():
+    """Tenta baixar automaticamente a planilha do SharePoint.
+
+    Cache de 1 hora (3600 segundos) para evitar downloads repetidos.
+
+    Returns:
+        Tupla (file_content, metadata, error_message)
+    """
+    try:
+        file_content, metadata = load_data_from_sharepoint_link(
+            SHAREPOINT_CONFIG["SHARE_URL"]
+        )
+        if file_content is None:
+            return None, None, metadata.get("error", "Falha desconhecida")
+        return file_content, metadata, None
+    except Exception as e:
+        return None, None, str(e)
+
+
+# ============================================================================
 # SIDEBAR
 # ============================================================================
 
 
 def render_sidebar():
-    """Renderiza a barra lateral com upload, navegação e filtros."""
+    """Renderiza a barra lateral com info do arquivo, navegação e filtros.
+
+    Returns:
+        Tupla (navigation, data_dict):
+            - navigation: seção selecionada
+            - data_dict: dicionário com dados carregados (ou None)
+    """
+    data_dict = None
+
     with st.sidebar:
         # Logo/Título
         st.markdown(
@@ -106,45 +151,76 @@ def render_sidebar():
 
         st.markdown("---")
 
-        # Upload de arquivo
-        st.markdown("### 📁 Fonte de Dados")
+        # Status da fonte de dados
+        st.markdown("### 🌐 Fonte de Dados")
 
-        # Verifica status do SharePoint
-        sp_status = check_sharepoint_status()
+        # Tenta carregar automaticamente do SharePoint
+        if "data" not in st.session_state:
+            with st.spinner("🔄 Conectando ao SharePoint..."):
+                file_content, metadata, error = auto_load_from_sharepoint()
 
-        # Tabs para escolher fonte de dados
-        source_tab1, source_tab2 = st.tabs(["Upload Manual", "SharePoint"])
+            if file_content is not None:
+                try:
+                    # Cria um objeto tipo UploadedFile fake para o data_loader
+                    class FakeUploadedFile:
+                        def __init__(self, content, name, size):
+                            self._content = content
+                            self.name = name
+                            self.size = size
 
-        with source_tab1:
+                        def getvalue(self):
+                            return self._content
+
+                    fake_file = FakeUploadedFile(
+                        content=file_content,
+                        name=metadata.get("filename", "sharepoint.xlsx"),
+                        size=metadata.get("file_size_bytes", len(file_content)),
+                    )
+                    data = load_data_from_upload(fake_file)
+                    # Sobrescreve metadata com info do SharePoint
+                    data["metadata"]["source"] = "sharepoint"
+                    data["metadata"]["last_update"] = metadata.get("last_update")
+                    st.session_state["data"] = data
+                    st.success("✅ Dados carregados do SharePoint")
+                except Exception as e:
+                    st.error(f"❌ Erro ao processar arquivo: {e}")
+            else:
+                st.error(f"❌ Falha ao acessar o SharePoint")
+                st.info(f"**Erro:** {error}")
+                st.warning(
+                    "Verifique sua conexão com a internet ou o link de compartilhamento. "
+                    "Você pode usar o upload manual abaixo como alternativa."
+                )
+
+        # Botão para forçar recarga do SharePoint
+        if st.button("🔄 Atualizar do SharePoint"):
+            auto_load_from_sharepoint.clear()
+            if "data" in st.session_state:
+                del st.session_state["data"]
+            st.rerun()
+
+        # FALLBACK OCULTO: Upload manual (apenas para emergências)
+        with st.expander("📁 Upload Manual (emergência)"):
+            st.caption(
+                "Use apenas se o SharePoint estiver indisponível. "
+                "Envie uma planilha Excel (.xlsx) com a estrutura padrão."
+            )
             uploaded_file = st.file_uploader(
-                "Envie a planilha de projeção (.xlsx)",
+                "Arquivo local (.xlsx)",
                 type=["xlsx", "xlsm"],
-                help=(
-                    "Arquivo Excel com índice de atingimento de meta por loja "
-                    "e por dia. Meta do ID: 115%."
-                ),
+                label_visibility="collapsed",
             )
 
-        with source_tab2:
-            if sp_status["configured"]:
-                st.success("✅ SharePoint configurado")
-                load_from_sp = st.button("🔄 Carregar do SharePoint")
-                if load_from_sp:
-                    with st.spinner("Baixando arquivo do SharePoint..."):
-                        file_content, metadata = load_data_from_sharepoint()
-                        if file_content:
-                            st.session_state["sharepoint_data"] = file_content
-                            st.success("Arquivo carregado com sucesso!")
-                        else:
-                            st.error("Falha ao carregar do SharePoint")
-            else:
-                st.warning("⚠️ SharePoint não configurado")
-                st.info(
-                    "Configure as variáveis de ambiente no arquivo .env "
-                    "(veja .env.example)"
-                )
-                if sp_status["missing_vars"]:
-                    st.code("\n".join(sp_status["missing_vars"]), language="bash")
+            if uploaded_file is not None:
+                try:
+                    with st.spinner("Processando arquivo local..."):
+                        data = load_data_from_upload(uploaded_file)
+                        data["metadata"]["source"] = "manual"
+                        st.session_state["data"] = data
+                        st.success("✅ Arquivo local carregado")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao carregar arquivo: {e}")
 
         st.markdown("---")
 
@@ -185,8 +261,11 @@ def render_sidebar():
                 except:
                     date_end = str(metadata["date_range"][1])
 
+            source_label = "☁️ SharePoint" if metadata.get("source") == "sharepoint" else "📁 Upload Manual"
+
             st.markdown(
                 f"""
+                - **Fonte:** {source_label}
                 - **Arquivo:** {metadata['filename']}
                 - **Tamanho:** {metadata['file_size_mb']:.2f} MB
                 - **Lojas:** {metadata['num_stores']}
@@ -196,6 +275,9 @@ def render_sidebar():
                 - **🎯 Meta:** {META_ID*100:.0f}%
                 """
             )
+
+            if metadata.get("last_update"):
+                st.caption(f"Última atualização: {metadata['last_update']}")
 
         # Filtros de loja (aparece apenas se dados carregados)
         if "data" in st.session_state:
@@ -210,7 +292,7 @@ def render_sidebar():
             )
             st.session_state["selected_stores"] = selected_stores if selected_stores else store_names
 
-        return navigation, uploaded_file
+        return navigation
 
 
 # ============================================================================
@@ -344,9 +426,10 @@ def render_visao_geral(df_stores: pd.DataFrame):
         last_date = dates_with_data.max()
 
     if last_date is not None:
+        col_name = f"Índice ({last_date.strftime('%d/%m') if hasattr(last_date, 'strftime') else last_date})"
         ultimo_dia_df = pd.DataFrame({
             "Loja": df_stores.index,
-            f"Índice ({last_date.strftime('%d/%m') if hasattr(last_date, 'strftime') else last_date})": df_stores[last_date].values,
+            col_name: df_stores[last_date].values,
             "Status": df_stores[last_date].apply(
                 lambda x: "✅ Acima" if pd.notna(x) and x >= META_ID else ("⚠️ Abaixo" if pd.notna(x) else "❌ Sem dado")
             ),
@@ -354,7 +437,7 @@ def render_visao_geral(df_stores: pd.DataFrame):
 
         st.dataframe(
             ultimo_dia_df.style.format({
-                f"Índice ({last_date.strftime('%d/%m') if hasattr(last_date, 'strftime') else last_date})": lambda x: f"{x*100:.2f}%" if pd.notna(x) else "-",
+                col_name: lambda x: f"{x*100:.2f}%" if pd.notna(x) else "-",
             }),
             use_container_width=True,
             height=500,
@@ -446,7 +529,7 @@ def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
 
     df_table_abs = df_filtered.copy()
     for col in df_table_abs.columns:
-        df_table_abs[col] = df_table_abs[col].apply(
+        df_table_abs[col] = df_table_abs[col].map(
             lambda x: f"{x*100:.2f}%" if pd.notna(x) else "-"
         )
 
@@ -1055,17 +1138,7 @@ def render_distribuicao(df_stores: pd.DataFrame):
 def main():
     """Função principal da aplicação."""
     # Renderiza sidebar e obtém navegação
-    navigation, uploaded_file = render_sidebar()
-
-    # Processa upload de arquivo
-    if uploaded_file is not None:
-        try:
-            with st.spinner("Carregando dados..."):
-                data = load_data_from_upload(uploaded_file)
-                st.session_state["data"] = data
-        except Exception as e:
-            st.error(f"❌ Erro ao carregar arquivo: {e}")
-            return
+    navigation = render_sidebar()
 
     # Verifica se há dados carregados
     if "data" not in st.session_state:
@@ -1073,15 +1146,24 @@ def main():
         st.markdown(
             f"""
             <div style="text-align: center; padding: 40px 20px;">
-                <h2 style="color: {Colors.PRIMARY};">Bem-vindo ao DashID</h2>
-                <p style="color: {Colors.TEXT_SECONDARY}; font-size: 1.1rem;">
-                    Dashboard de análise de performance diária do <strong>Índice de Identificação (ID)</strong>
+                <h2 style="color: {Colors.DANGER};">⚠️ Não foi possível carregar os dados</h2>
+                <p style="color: {Colors.TEXT_SECONDARY}; font-size: 1.1rem; margin-top: 20px;">
+                    O dashboard não conseguiu acessar a planilha no SharePoint.
                 </p>
-                <p style="color: {Colors.PRIMARY}; font-size: 1.3rem; font-weight: 600;">
+                <p style="color: {Colors.TEXT_MUTED}; margin-top: 10px;">
+                    Possíveis causas:
+                </p>
+                <ul style="color: {Colors.TEXT_MUTED}; text-align: left; display: inline-block;">
+                    <li>Sem conexão com a internet</li>
+                    <li>Link de compartilhamento do SharePoint expirado ou inválido</li>
+                    <li>SharePoint temporariamente indisponível</li>
+                </ul>
+                <p style="color: {Colors.PRIMARY}; font-size: 1rem; margin-top: 20px; font-weight: 600;">
+                    👈 Abra o expander "Upload Manual (emergência)" na barra lateral
+                    para carregar um arquivo local.
+                </p>
+                <p style="color: {Colors.TEXT_MUTED}; font-size: 0.9rem; margin-top: 20px;">
                     🎯 Meta do ID: {META_ID*100:.0f}% (consulta de CPF do cliente)
-                </p>
-                <p style="color: {Colors.TEXT_MUTED}; margin-top: 20px;">
-                    👈 Envie uma planilha Excel (.xlsx) na barra lateral para começar a análise.
                 </p>
             </div>
             """,
