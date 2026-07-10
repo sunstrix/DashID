@@ -17,18 +17,24 @@ Responsável por todos os cálculos de negócio, indicadores e análises:
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
-CORRECOES APLICADAS (v0.3.3):
+CORRECOES APLICADAS (v0.4.0):
+- BUG 1: Adicionada funcao _ensure_datetime_columns() para filtrar APENAS colunas de datas
+- BUG 2: Conversao explicita para float64 antes de calculos matematicos
+- BUG 4: Mantido map() em vez de applymap() (Pandas 2.1+)
+
+CORRECOES ANTERIORES (v0.3.3):
 - calculate_kpi_cards(): Filtragem segura de NaN usando pd.notna()
 - calculate_distribution(): Filtragem segura de valores nao numericos
 - calculate_moving_averages(): Removido parametro axis (incompativel Pandas 2.1+)
 
 Autor: Alex Paulo
-Versao: 0.3.3
+Versao: 0.4.0
 """
 
 import io
 import logging
 from typing import Dict, List, Optional, Tuple, Union
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -52,6 +58,46 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# FUNCAO AUXILIAR: GARANTIR COLUNAS DE DATA E VALORES FLOAT64
+# ============================================================================
+
+
+def _ensure_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Filtra APENAS colunas de datas e converte valores para float64.
+    
+    CORRECAO BUG 1 e BUG 2:
+    - Filtra colunas que sao datetime/Timestamp (remove colunas de texto)
+    - Converte valores para float64 (evita dtype object)
+    - Retorna DataFrame limpo pronto para analise
+    
+    Args:
+        df: DataFrame que pode conter colunas de texto e datas misturadas
+    
+    Returns:
+        DataFrame com APENAS colunas de datas e valores float64
+    """
+    if df.empty:
+        return df
+    
+    # Filtra APENAS colunas que sao datetime/Timestamp
+    datetime_cols = [col for col in df.columns if isinstance(col, (pd.Timestamp, datetime))]
+    
+    if not datetime_cols:
+        logger.warning("Nenhuma coluna de data encontrada no DataFrame")
+        return pd.DataFrame()
+    
+    # Seleciona apenas colunas de data
+    df_filtered = df[datetime_cols].copy()
+    
+    # CORRECAO BUG 2: Converte explicitamente para float64
+    df_filtered = df_filtered.astype('float64')
+    
+    logger.debug(f"Filtradas {len(datetime_cols)} colunas de data, dtype: {df_filtered.dtypes.iloc[0]}")
+    
+    return df_filtered
+
+
+# ============================================================================
 # KPIs DE TOPO (CARDS)
 # ============================================================================
 
@@ -65,6 +111,10 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
     - Loja com pior índice acumulado
     - Número de lojas acima da meta (>= 1.15) no último dia disponível
     - Número de lojas abaixo da meta (< 1.15) no último dia disponível
+
+    CORRECAO v0.4.0:
+    - Usa _ensure_datetime_columns() para filtrar APENAS colunas de datas
+    - Evita erro: TypeError: '<=' not supported between str and datetime
 
     Args:
         df_stores: DataFrame com lojas nas linhas e datas nas colunas.
@@ -83,8 +133,22 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
             "ultimo_dia": None,
         }
 
+    # CORRECAO v0.4.0: Filtrar APENAS colunas de datas e converter para float64
+    df_clean = _ensure_datetime_columns(df_stores)
+    
+    if df_clean.empty:
+        return {
+            "media_geral": 0.0,
+            "melhor_loja": {"nome": "-", "valor": 0.0},
+            "pior_loja": {"nome": "-", "valor": 0.0},
+            "acima_meta": 0,
+            "abaixo_meta": 0,
+            "total_lojas": 0,
+            "ultimo_dia": None,
+        }
+
     # Última data com dados disponíveis
-    last_date = get_last_available_date(df_stores)
+    last_date = get_last_available_date(df_clean)
     if last_date is None:
         return {
             "media_geral": 0.0,
@@ -92,13 +156,13 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
             "pior_loja": {"nome": "-", "valor": 0.0},
             "acima_meta": 0,
             "abaixo_meta": 0,
-            "total_lojas": len(df_stores),
+            "total_lojas": len(df_clean),
             "ultimo_dia": None,
         }
 
     # Índice médio geral do mês (MTD) - média de todos os valores não-NaN
     # CORREÇÃO: Usar pd.isna() em vez de np.isnan() para compatibilidade
-    media_geral = df_stores.values.flatten()
+    media_geral = df_clean.values.flatten()
     # Converter para float e filtrar NaN de forma segura
     media_geral_float = []
     for val in media_geral:
@@ -110,8 +174,9 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
     
     media_geral = float(np.mean(media_geral_float)) if len(media_geral_float) > 0 else 0.0
 
+    # CORRECAO v0.4.0: Agora df_clean.columns sao APENAS datetime, entao a comparacao funciona
     # Índice acumulado por loja (média do mês até a última data)
-    df_until_last = df_stores.loc[:, df_stores.columns <= last_date]
+    df_until_last = df_clean.loc[:, df_clean.columns <= last_date]
     media_por_loja = df_until_last.mean(axis=1)
 
     # Melhor e pior loja
@@ -121,7 +186,7 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
     pior_loja_valor = float(media_por_loja[pior_loja_idx])
 
     # Lojas acima/abaixo da meta no último dia disponível (META = 1.15)
-    valores_ultimo_dia = df_stores[last_date].dropna()
+    valores_ultimo_dia = df_clean[last_date].dropna()
     acima_meta = int((valores_ultimo_dia >= META_ID).sum())
     abaixo_meta = int((valores_ultimo_dia < META_ID).sum())
 
@@ -158,6 +223,9 @@ def get_last_available_date(df: pd.DataFrame) -> Optional[pd.Timestamp]:
 def calculate_daily_variation(df: pd.DataFrame) -> pd.DataFrame:
     """Calcula a variação percentual diária entre um dia e o anterior.
 
+    CORRECAO v0.4.0:
+    - Usa _ensure_datetime_columns() para garantir colunas de datas e float64
+
     Fórmula: variação = (valor_dia_atual / valor_dia_anterior) - 1
 
     Args:
@@ -169,8 +237,14 @@ def calculate_daily_variation(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or len(df.columns) < 2:
         return pd.DataFrame()
 
+    # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
+    df_clean = _ensure_datetime_columns(df)
+    
+    if df_clean.empty or len(df_clean.columns) < 2:
+        return pd.DataFrame()
+
     # pct_change(axis=1) calcula variação ao longo das colunas (datas)
-    df_variation = df.pct_change(axis=1)
+    df_variation = df_clean.pct_change(axis=1)
     return df_variation
 
 
@@ -249,6 +323,9 @@ def prepare_variation_table(
 def analyze_by_weekday(df: pd.DataFrame) -> pd.DataFrame:
     """Agrupar os valores por dia da semana (segunda a domingo).
 
+    CORRECAO v0.4.0:
+    - Usa _ensure_datetime_columns() para garantir colunas de datas
+
     Calcula média, mediana e desvio padrão do índice por loja e consolidado.
 
     Args:
@@ -263,11 +340,17 @@ def analyze_by_weekday(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
+    # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
+    df_clean = _ensure_datetime_columns(df)
+    
+    if df_clean.empty:
+        return pd.DataFrame()
+
     # Mapeia cada data para o dia da semana (0=segunda, 6=domingo)
-    weekdays = df.columns.dayofweek
+    weekdays = df_clean.columns.dayofweek
 
     # Cria DataFrame com dia da semana como índice auxiliar
-    df_with_weekday = df.T.copy()
+    df_with_weekday = df_clean.T.copy()
     df_with_weekday["weekday"] = weekdays
 
     # Agrupa por dia da semana
@@ -298,6 +381,9 @@ def analyze_by_weekday(df: pd.DataFrame) -> pd.DataFrame:
 def analyze_weekday_by_store(df: pd.DataFrame) -> pd.DataFrame:
     """Analisa o desempenho por dia da semana para cada loja individualmente.
 
+    CORRECAO v0.4.0:
+    - Usa _ensure_datetime_columns() para garantir colunas de datas
+
     Args:
         df: DataFrame com lojas nas linhas e datas nas colunas.
 
@@ -309,8 +395,14 @@ def analyze_weekday_by_store(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
-    weekdays = df.columns.dayofweek
-    df_with_weekday = df.T.copy()
+    # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
+    df_clean = _ensure_datetime_columns(df)
+    
+    if df_clean.empty:
+        return pd.DataFrame()
+
+    weekdays = df_clean.columns.dayofweek
+    df_with_weekday = df_clean.T.copy()
     df_with_weekday["weekday"] = weekdays
 
     # Agrupa por dia da semana e calcula média para cada loja
@@ -377,6 +469,9 @@ def calculate_store_ranking(
 ) -> pd.DataFrame:
     """Calcula o ranking de lojas pelo índice médio acumulado.
 
+    CORRECAO v0.4.0:
+    - Usa _ensure_datetime_columns() para garantir colunas de datas
+
     Args:
         df_stores: DataFrame com lojas nas linhas e datas nas colunas.
         period: "month" (mês atual) ou "last_week" (últimos 7 dias).
@@ -388,33 +483,39 @@ def calculate_store_ranking(
     if df_stores.empty:
         return pd.DataFrame()
 
+    # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
+    df_clean = _ensure_datetime_columns(df_stores)
+    
+    if df_clean.empty:
+        return pd.DataFrame()
+
     if period == "last_week":
         # Últimos 7 dias com dados
-        last_date = get_last_available_date(df_stores)
+        last_date = get_last_available_date(df_clean)
         if last_date is None:
             return pd.DataFrame()
         start_date = last_date - pd.Timedelta(days=6)
-        df_period = df_stores.loc[:, (df_stores.columns >= start_date) & (df_stores.columns <= last_date)]
+        df_period = df_clean.loc[:, (df_clean.columns >= start_date) & (df_clean.columns <= last_date)]
     else:
-        df_period = df_stores
+        df_period = df_clean
 
     # Índice médio por loja
     media_por_loja = df_period.mean(axis=1)
 
     # Variação frente à semana anterior (se houver dados suficientes)
-    variacao_semanal = pd.Series(np.nan, index=df_stores.index)
-    if len(df_stores.columns) >= 14:
-        last_date = get_last_available_date(df_stores)
+    variacao_semanal = pd.Series(np.nan, index=df_clean.index)
+    if len(df_clean.columns) >= 14:
+        last_date = get_last_available_date(df_clean)
         if last_date is not None:
             # Semana atual (últimos 7 dias)
             start_current = last_date - pd.Timedelta(days=6)
-            df_current = df_stores.loc[:, (df_stores.columns >= start_current) & (df_stores.columns <= last_date)]
+            df_current = df_clean.loc[:, (df_clean.columns >= start_current) & (df_clean.columns <= last_date)]
             media_current = df_current.mean(axis=1)
 
             # Semana anterior (7 dias antes disso)
             end_previous = start_current - pd.Timedelta(days=1)
             start_previous = end_previous - pd.Timedelta(days=6)
-            df_previous = df_stores.loc[:, (df_stores.columns >= start_previous) & (df_stores.columns <= end_previous)]
+            df_previous = df_clean.loc[:, (df_clean.columns >= start_previous) & (df_clean.columns <= end_previous)]
             if not df_previous.empty:
                 media_previous = df_previous.mean(axis=1)
                 # Variação percentual
@@ -445,6 +546,9 @@ def calculate_moving_averages(
 ) -> Dict[int, pd.DataFrame]:
     """Calcula médias móveis para suavizar ruído diário.
 
+    CORRECAO v0.4.0:
+    - Usa _ensure_datetime_columns() para garantir colunas de datas e float64
+
     CORRECAO (v0.3.3): Pandas 2.1+ nao aceita axis como argumento nomeado.
     Usamos .T.rolling().T para aplicar rolling nas colunas.
 
@@ -464,10 +568,16 @@ def calculate_moving_averages(
     if df.empty:
         return {w: pd.DataFrame() for w in windows}
 
+    # CORRECAO v0.4.0: Filtrar APENAS colunas de datas e converter para float64
+    df_clean = _ensure_datetime_columns(df)
+    
+    if df_clean.empty:
+        return {w: pd.DataFrame() for w in windows}
+
     result = {}
     for window in windows:
         # CORRECAO: Pandas 2.1+ - usar transposicao em vez de axis
-        df_ma = df.T.rolling(window=window, min_periods=1).mean().T
+        df_ma = df_clean.T.rolling(window=window, min_periods=1).mean().T
         result[window] = df_ma
 
     return result
@@ -481,6 +591,9 @@ def calculate_moving_averages(
 def calculate_volatility(df: pd.DataFrame) -> pd.DataFrame:
     """Calcula a volatilidade (desvio padrão) do índice por loja.
 
+    CORRECAO v0.4.0:
+    - Usa _ensure_datetime_columns() para garantir colunas de datas e float64
+
     Lojas com menor desvio padrão são mais consistentes.
 
     Args:
@@ -493,7 +606,13 @@ def calculate_volatility(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
-    std_por_loja = df.std(axis=1)
+    # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
+    df_clean = _ensure_datetime_columns(df)
+    
+    if df_clean.empty:
+        return pd.DataFrame()
+
+    std_por_loja = df_clean.std(axis=1)
 
     # Classificação baseada em limiares
     classificacao = pd.cut(
@@ -522,6 +641,10 @@ def calculate_volatility(df: pd.DataFrame) -> pd.DataFrame:
 def calculate_trend(df: pd.DataFrame) -> pd.DataFrame:
     """Calcula a tendência de cada loja via regressão linear simples.
 
+    CORRECAO v0.4.0:
+    - Usa _ensure_datetime_columns() para garantir float64
+    - Evita erro: Cannot cast ufunc 'lstsq' input 1 from dtype('O')
+
     Usa numpy.polyfit para ajustar uma reta aos dados diários.
     Classifica a tendência como: alta, estável ou queda.
 
@@ -535,11 +658,17 @@ def calculate_trend(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
+    # CORRECAO v0.4.0: Filtrar APENAS colunas de datas e converter para float64
+    df_clean = _ensure_datetime_columns(df)
+    
+    if df_clean.empty:
+        return pd.DataFrame()
+
     min_points = BUSINESS_CONFIG["TREND_REGRESSION_MIN_POINTS"]
     results = []
 
-    for loja in df.index:
-        valores = df.loc[loja].dropna()
+    for loja in df_clean.index:
+        valores = df_clean.loc[loja].dropna()
         if len(valores) < min_points:
             results.append({
                 "loja": loja,
@@ -550,7 +679,9 @@ def calculate_trend(df: pd.DataFrame) -> pd.DataFrame:
 
         # X = índices numéricos dos dias (0, 1, 2, ...)
         x = np.arange(len(valores))
-        y = valores.values
+        
+        # CORRECAO BUG 2: Garantir que y seja float64
+        y = valores.values.astype('float64')
 
         # Regressão linear (grau 1)
         try:
@@ -583,6 +714,9 @@ def calculate_trend(df: pd.DataFrame) -> pd.DataFrame:
 def generate_sparkline_data(df: pd.DataFrame, loja: str) -> List[float]:
     """Gera dados para sparkline (mini-gráfico) de uma loja específica.
 
+    CORRECAO v0.4.0:
+    - Usa _ensure_datetime_columns() para garantir float64
+
     Args:
         df: DataFrame com lojas nas linhas e datas nas colunas.
         loja: Nome da loja.
@@ -593,7 +727,13 @@ def generate_sparkline_data(df: pd.DataFrame, loja: str) -> List[float]:
     if loja not in df.index:
         return []
 
-    valores = df.loc[loja].dropna()
+    # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
+    df_clean = _ensure_datetime_columns(df)
+    
+    if df_clean.empty:
+        return []
+
+    valores = df_clean.loc[loja].dropna()
     if len(valores) == 0:
         return []
 
@@ -736,6 +876,9 @@ def calculate_distribution(
 ) -> pd.DataFrame:
     """Calcula a distribuição dos índices diários para histograma.
 
+    CORRECAO v0.4.0:
+    - Usa _ensure_datetime_columns() para garantir float64
+
     Args:
         df: DataFrame com lojas nas linhas e datas nas colunas.
         bins: Número de faixas do histograma.
@@ -747,8 +890,14 @@ def calculate_distribution(
     if df.empty:
         return pd.DataFrame()
 
+    # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
+    df_clean = _ensure_datetime_columns(df)
+    
+    if df_clean.empty:
+        return pd.DataFrame()
+
     # Achata todos os valores não-NaN
-    valores = df.values.flatten()
+    valores = df_clean.values.flatten()
     # Filtra valores não numéricos e NaN de forma segura
     valores_filtrados = []
     for val in valores:
