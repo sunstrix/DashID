@@ -17,16 +17,23 @@ Este modulo implementa DOIS metodos de acesso ao SharePoint:
    - Usado apenas se o metodo principal falhar e o usuario quiser
      habilitar autenticacao avancada
 
+CORRECAO APLICADA (v0.2.5):
+- Filtra GUIDs capturados por regex (causa do erro "No scheme supplied")
+- Valida URL extraida antes de tentar download
+- Adiciona fallback com ?download=1
+- Rejeita strings que nao comecam com http:// ou https://
+
 Autor: Alex Paulo
-Versao: 0.2.2
+Versao: 0.2.5
 """
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional, Tuple
-from urllib.parse import urlparse, parse_qs, urlencode
+from urllib.parse import urlparse, parse_qs
 
 import requests
 
@@ -108,6 +115,80 @@ class SharePointConfig:
 
 
 # ============================================================================
+# FUNCOES AUXILIARES DE VALIDACAO DE URL
+# ============================================================================
+
+
+def _is_valid_url(url: str) -> bool:
+    """Verifica se uma string e uma URL valida (com scheme http/https).
+
+    Args:
+        url: String a ser verificada.
+
+    Returns:
+        True se e uma URL valida, False caso contrario.
+    """
+    if not url or not isinstance(url, str):
+        return False
+
+    url = url.strip()
+
+    # Rejeita strings vazias ou muito curtas
+    if len(url) < 10:
+        return False
+
+    # Rejeita GUIDs explicitamente (padrao {xxxxxxxx-xxxx-...})
+    if url.startswith("{") and url.endswith("}"):
+        logger.warning(f"String rejeitada (GUID detectado): {url}")
+        return False
+
+    # Rejeita strings que comecam com { mas nao terminam com }
+    # (GUIDs parciais capturados por regex)
+    if url.startswith("{"):
+        logger.warning(f"String rejeitada (inicia com {{): {url}")
+        return False
+
+    # Deve ter scheme http:// ou https://
+    if not (url.startswith("http://") or url.startswith("https://")):
+        logger.warning(f"String rejeitada (sem scheme http/https): {url[:80]}")
+        return False
+
+    # Tenta fazer parse da URL
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except Exception:
+        return False
+
+
+def _is_guid(string: str) -> bool:
+    """Verifica se uma string e um GUID do SharePoint.
+
+    Args:
+        string: String a ser verificada.
+
+    Returns:
+        True se parece ser um GUID, False caso contrario.
+    """
+    if not string or not isinstance(string, str):
+        return False
+
+    string = string.strip()
+
+    # Padrao classico de GUID: {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
+    guid_pattern = r'^\{?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}?$'
+    if re.match(guid_pattern, string):
+        return True
+
+    # GUID sem hifens
+    guid_no_dash = r'^\{?[0-9a-fA-F]{32}\}?$'
+    if re.match(guid_no_dash, string):
+        return True
+
+    return False
+
+
+# ============================================================================
 # METODO PRINCIPAL: DOWNLOAD DIRETO DO LINK DE COMPARTILHAMENTO
 # ============================================================================
 
@@ -164,15 +245,15 @@ def _extract_download_url(share_url: str, timeout: int) -> Optional[str]:
     """Extrai a URL de download real a partir do link de compartilhamento.
 
     O SharePoint redireciona o link de compartilhamento para uma pagina
-    que contem a URL de download real (geralmente em download.aspx ou
-    similar). Este metodo segue os redirects e tenta extrair essa URL.
+    que contem a URL de download real. Este metodo segue os redirects e
+    tenta extrair essa URL, VALIDANDO que nao e um GUID.
 
     Args:
         share_url: Link de compartilhamento do SharePoint.
         timeout: Timeout em segundos.
 
     Returns:
-        URL de download real ou None se nao conseguir extrair.
+        URL de download valida ou None se nao conseguir extrair.
     """
     headers = {
         "User-Agent": (
@@ -189,7 +270,7 @@ def _extract_download_url(share_url: str, timeout: int) -> Optional[str]:
 
     try:
         # Faz GET seguindo redirects para encontrar a URL final
-        logger.info(f"Acessando link de compartilhamento: {share_url}")
+        logger.info(f"Acessando link de compartilhamento: {share_url[:80]}...")
         response = requests.get(
             share_url,
             headers=headers,
@@ -204,46 +285,94 @@ def _extract_download_url(share_url: str, timeout: int) -> Optional[str]:
             return None
 
         final_url = response.url
-        logger.info(f"URL final apos redirects: {final_url}")
+        logger.info(f"URL final apos redirects: {final_url[:80]}...")
+
+        # Lista de URLs candidatas a download (serao validadas)
+        candidate_urls = []
 
         # Tenta extrair parametros da URL que contenham a URL de download
         parsed = urlparse(final_url)
         query_params = parse_qs(parsed.query)
 
-        # Alguns links do SharePoint passam a URL de download em parametros
-        for param in ["sourcedoc", "file", "download", "url", "fileUrl"]:
+        # Parametros comuns que contem URL de download
+        for param in ["sourcedoc", "file", "download", "url", "fileUrl", "OriginalSource"]:
             if param in query_params:
-                download_url = query_params[param][0]
-                logger.info(f"URL de download extraida do parametro '{param}'")
-                return download_url
+                url_candidata = query_params[param][0]
+                candidate_urls.append(("param_" + param, url_candidata))
 
-        # Se nao encontrou em parametros, tenta extrair do HTML
-        # O SharePoint geralmente coloca a URL de download em um botao
-        # ou em um atributo data-url
+        # Se a URL final ja for valida e terminar com .xlsx, pode ser o download direto
+        if _is_valid_url(final_url) and ".xlsx" in final_url.lower():
+            candidate_urls.append(("final_url_xlsx", final_url))
+
+        # Extrai URLs do HTML usando regex
         html_content = response.text
 
-        # Procura por padroes comuns de URL de download
+        # Padroes de regex para encontrar URLs no HTML (usando raw strings para evitar warnings)
         patterns = [
-            'downloadUrl":"([^"]+)"',
-            'fileUrl":"([^"]+)"',
-            'href="([^"]*download\.aspx[^"]*)"',
-            'href="([^"]*\.xlsx[^"]*)"',
+            (r'downloadUrl"\s*:\s*"([^"]+)"', "downloadUrl_json"),
+            (r'fileUrl"\s*:\s*"([^"]+)"', "fileUrl_json"),
+            (r'"@content\.downloadUrl"\s*:\s*"([^"]+)"', "graph_download"),
+            (r'href="([^"]*download=1[^"]*)"', "download_param"),
+            (r'href="([^"]*download\.aspx[^"]*)"', "download_aspx"),
+            (r'href="(https?://[^"]*\.xlsx[^"]*)"', "xlsx_url"),
+            (r'"(https?://[^"]*sharepoint\.com[^"]*\.xlsx[^"]*)"', "sharepoint_xlsx"),
+            (r'"(https?://[^"]*/_layouts/15/download\.aspx[^"]*)"', "layouts_download"),
         ]
 
-        import re
-        for pattern in patterns:
-            match = re.search(pattern, html_content)
-            if match:
-                download_url = match.group(1)
-                # Decodifica URL se necessario
-                download_url = download_url.replace("\\u0026", "&")
-                logger.info(f"URL de download extraida do HTML: {download_url}")
-                return download_url
+        for pattern, pattern_name in patterns:
+            try:
+                matches = re.findall(pattern, html_content)
+                for match in matches:
+                    # Decodifica URL se necessario
+                    url_decoded = match.replace("\\u0026", "&").replace("\\/", "/")
+                    candidate_urls.append((pattern_name, url_decoded))
+            except re.error as e:
+                logger.warning(f"Erro no regex '{pattern_name}': {e}")
 
-        # Se nao encontrou URL especifica, retorna a URL final
-        # (alguns links ja sao o download direto)
-        logger.info("URL de download nao extraida, usando URL final.")
-        return final_url
+        # Valida todas as URLs candidatas e retorna a primeira valida
+        logger.info(f"Encontradas {len(candidate_urls)} URLs candidatas")
+
+        for source, url in candidate_urls:
+            logger.debug(f"Validando URL de fonte '{source}': {url[:80]}...")
+
+            # Rejeita GUIDs
+            if _is_guid(url):
+                logger.warning(f"URL rejeitada (GUID): {url}")
+                continue
+
+            # Valida como URL
+            if _is_valid_url(url):
+                logger.info(f"URL valida encontrada (fonte: {source}): {url[:80]}...")
+                return url
+            else:
+                logger.debug(f"URL invalida rejeitada: {url[:50]}...")
+
+        # FALLBACK 1: Tenta adicionar ?download=1 na URL final
+        logger.info("Nenhuma URL valida encontrada no HTML. Tentando fallback com ?download=1")
+        download_url = final_url
+        if "?" in download_url:
+            download_url = download_url + "&download=1"
+        else:
+            download_url = download_url + "?download=1"
+
+        if _is_valid_url(download_url):
+            logger.info(f"Usando URL com ?download=1: {download_url[:80]}...")
+            return download_url
+
+        # FALLBACK 2: Tenta a URL original de compartilhamento com ?download=1
+        logger.info("Tentando URL original com ?download=1")
+        original_with_download = share_url
+        if "?" in original_with_download:
+            original_with_download = original_with_download + "&download=1"
+        else:
+            original_with_download = original_with_download + "?download=1"
+
+        if _is_valid_url(original_with_download):
+            logger.info(f"Usando URL original com ?download=1: {original_with_download[:80]}...")
+            return original_with_download
+
+        logger.error("Nao foi possivel extrair nenhuma URL valida de download")
+        return None
 
     except requests.exceptions.Timeout:
         logger.error(f"Timeout ao acessar link de compartilhamento ({timeout}s)")
@@ -276,6 +405,16 @@ def download_from_sharepoint_link(share_url: str) -> Tuple[Optional[bytes], Opti
             - file_content: Conteudo binario do arquivo (bytes) ou None
             - error_message: Mensagem de erro (string) ou None se sucesso
     """
+    # Valida a URL de entrada primeiro
+    if not _is_valid_url(share_url):
+        error_msg = (
+            f"URL de compartilhamento invalida: {share_url[:50]}... "
+            "Verifique o campo SHARE_URL em config.py. "
+            "A URL deve comecar com 'https://' e nao pode ser um GUID."
+        )
+        logger.error(error_msg)
+        return None, error_msg
+
     # Verifica cache primeiro
     if _is_cache_valid():
         try:
@@ -300,6 +439,15 @@ def download_from_sharepoint_link(share_url: str) -> Tuple[Optional[bytes], Opti
         )
         return None, error_msg
 
+    # VALIDACAO CRITICA: Rejeita GUIDs antes de tentar baixar
+    if _is_guid(download_url) or not _is_valid_url(download_url):
+        error_msg = (
+            f"URL de download invalida extraida: {download_url[:50]}... "
+            "O SharePoint pode estar exigindo autenticacao."
+        )
+        logger.error(error_msg)
+        return None, error_msg
+
     # Baixa o arquivo
     headers = {
         "User-Agent": (
@@ -310,7 +458,7 @@ def download_from_sharepoint_link(share_url: str) -> Tuple[Optional[bytes], Opti
     }
 
     try:
-        logger.info(f"Baixando arquivo de: {download_url}")
+        logger.info(f"Baixando arquivo de: {download_url[:80]}...")
         response = requests.get(
             download_url,
             headers=headers,
@@ -395,7 +543,7 @@ def load_data_from_sharepoint_link(share_url: str) -> Tuple[Optional[bytes], dic
     from datetime import datetime
 
     logger.info("Iniciando download do SharePoint via link de compartilhamento...")
-    logger.info(f"URL: {share_url}")
+    logger.info(f"URL: {share_url[:80]}...")
 
     file_content, error_msg = download_from_sharepoint_link(share_url)
 
