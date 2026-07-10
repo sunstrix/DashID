@@ -1,5 +1,5 @@
 """
-DashID - Aplicacao Principal Streamlit (v0.4.0)
+DashID - Aplicacao Principal Streamlit (v0.4.1)
 ================================================
 
 ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
@@ -14,6 +14,9 @@ ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
+CORRECOES v0.4.1:
+- BUG 3: Substituido use_container_width por width='stretch' (Streamlit 2025+)
+
 ATUALIZACOES v0.4.0:
 - Nomes das lojas no formato "Codigo - Nome" (ex: "12605 - Coop Joaquim Nabuco")
 - Agrupamento por cidade via coluna C "Cidade" (sem linhas de totalizacao)
@@ -21,7 +24,7 @@ ATUALIZACOES v0.4.0:
 - Comparativo por Canal agora mostra cidades (SBC, Sao Paulo)
 
 Autor: Alex Paulo
-Versao: 0.4.0
+Versao: 0.4.1
 """
 
 import streamlit as st
@@ -510,7 +513,8 @@ def render_visao_geral(df_stores: pd.DataFrame):
             height=LAYOUT_CONFIG["CHART_HEIGHT"],
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
+        st.plotly_chart(fig, width='stretch')
 
         # Tabela resumo por loja
         st.subheader("📋 Performance por Loja (Ultimo Dia)")
@@ -527,11 +531,12 @@ def render_visao_geral(df_stores: pd.DataFrame):
                 ),
             })
 
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
             st.dataframe(
                 ultimo_dia_df.style.format({
                     col_name: lambda x: f"{x*100:.2f}%" if pd.notna(x) else "-",
                 }),
-                use_container_width=True,
+                width='stretch',
                 height=500,
             )
     except Exception as e:
@@ -605,7 +610,8 @@ def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
+        st.plotly_chart(fig, width='stretch')
     except Exception as e:
         st.error(f"Erro na Analise Horizontal: {e}")
         logger.error(traceback.format_exc())
@@ -648,15 +654,17 @@ def render_dia_da_semana(df_stores: pd.DataFrame, selected_stores: list):
                 height=LAYOUT_CONFIG["CHART_HEIGHT_SMALL"],
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
+            st.plotly_chart(fig, width='stretch')
 
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
             st.dataframe(
                 df_weekday.style.format({
                     "media": lambda x: f"{x*100:.2f}%",
                     "mediana": lambda x: f"{x*100:.2f}%",
                     "desvio_padrao": lambda x: f"{x*100:.2f}%",
                 }),
-                use_container_width=True,
+                width='stretch',
             )
     except Exception as e:
         st.error(f"Erro na Analise por Dia da Semana: {e}")
@@ -677,12 +685,13 @@ def render_ranking(df_stores: pd.DataFrame):
                 lambda x: "✅ Acima" if x >= META_ID else "⚠️ Abaixo"
             )
 
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
             st.dataframe(
                 df_ranking_display.style.format({
                     "indice_medio": lambda x: f"{x*100:.2f}%",
                     "variacao_semanal": lambda x: f"{x:+.2f}%" if pd.notna(x) else "-",
                 }),
-                use_container_width=True,
+                width='stretch',
                 height=500,
             )
 
@@ -719,7 +728,8 @@ def render_ranking(df_stores: pd.DataFrame):
                 height=max(400, len(df_ranking) * 30),
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
+            st.plotly_chart(fig, width='stretch')
     except Exception as e:
         st.error(f"Erro no Ranking: {e}")
         logger.error(traceback.format_exc())
@@ -794,7 +804,8 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
                 height=LAYOUT_CONFIG["CHART_HEIGHT"],
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
+            st.plotly_chart(fig, width='stretch')
 
         st.markdown("---")
 
@@ -808,11 +819,12 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
                 lambda x: "✅ Acima" if x >= META_ID else "⚠️ Abaixo"
             )
 
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
             st.dataframe(
                 df_trend.style.format({
                     "inclinacao": lambda x: f"{x:.4f}" if pd.notna(x) else "-",
                 }),
-                use_container_width=True,
+                width='stretch',
                 height=400,
             )
 
@@ -842,7 +854,8 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
                 height=400,
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
+            st.plotly_chart(fig, width='stretch')
     except Exception as e:
         st.error(f"Erro em Medias Moveis: {e}")
         logger.error(traceback.format_exc())
@@ -859,11 +872,12 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
 
         if not df_alerts.empty:
             st.warning(f"⚠️ {len(df_alerts)} loja(s) com 3 ou mais dias consecutivos de queda:")
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
             st.dataframe(
                 df_alerts.style.format({
                     "ultima_data": lambda x: x.strftime("%d/%m/%Y") if hasattr(x, "strftime") and pd.notna(x) else str(x),
                 }),
-                use_container_width=True,
+                width='stretch',
             )
         else:
             st.success("✅ Nenhuma loja com quedas consecutivas criticas (3+ dias)")
@@ -888,12 +902,13 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
                 df_abaixo = df_abaixo.sort_values("Indice", ascending=True)
 
                 st.error(f"🔴 {len(abaixo_meta)} loja(s) abaixo da meta no ultimo dia:")
+                # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
                 st.dataframe(
                     df_abaixo.style.format({
                         "Indice": lambda x: f"{x*100:.2f}%",
                         "Distancia da Meta": lambda x: f"-{x*100:.2f}%",
                     }),
-                    use_container_width=True,
+                    width='stretch',
                 )
             else:
                 st.success(f"✅ Todas as lojas estao acima da meta de {META_ID*100:.0f}% no ultimo dia!")
@@ -904,11 +919,12 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
 
         if not df_volatility.empty:
             st.subheader("📊 Volatilidade e Consistencia")
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
             st.dataframe(
                 df_volatility.style.format({
                     "desvio_padrao": lambda x: f"{x*100:.2f}%",
                 }),
-                use_container_width=True,
+                width='stretch',
                 height=400,
             )
 
@@ -939,7 +955,8 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
                 height=max(400, len(df_volatility) * 25),
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
+            st.plotly_chart(fig, width='stretch')
     except Exception as e:
         st.error(f"Erro em Alertas: {e}")
         logger.error(traceback.format_exc())
@@ -953,12 +970,13 @@ def render_comparativo_canal(df_stores: pd.DataFrame, df_channels: pd.DataFrame)
 
         # v0.4.0: df_channels agora contem dados agrupados por cidade
         if not df_channels.empty:
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
             st.dataframe(
                 df_channels.style.format({
                     "indice_medio": lambda x: f"{x*100:.2f}%" if pd.notna(x) else "-",
                     "variacao_ultimo_dia": lambda x: f"{x:+.2f}%" if pd.notna(x) else "-",
                 }),
-                use_container_width=True,
+                width='stretch',
             )
 
             colors_channel = [
@@ -993,7 +1011,8 @@ def render_comparativo_canal(df_stores: pd.DataFrame, df_channels: pd.DataFrame)
                 height=LAYOUT_CONFIG["CHART_HEIGHT_SMALL"],
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
+            st.plotly_chart(fig, width='stretch')
         else:
             st.info("Nenhum dado de cidade disponivel.")
     except Exception as e:
@@ -1029,7 +1048,8 @@ def render_distribuicao(df_stores: pd.DataFrame):
                 height=LAYOUT_CONFIG["CHART_HEIGHT"],
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
+            st.plotly_chart(fig, width='stretch')
 
             valores = df_stores.values.flatten()
             valores_filtrados = []
@@ -1055,11 +1075,12 @@ def render_distribuicao(df_stores: pd.DataFrame):
                 with col4:
                     st.metric(f"Abaixo da Meta (<{META_ID*100:.0f}%)", f"{abaixo_meta_count} ({abaixo_meta_count/total*100:.1f}%)")
 
+            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
             st.dataframe(
                 df_dist.style.format({
                     "percentual": lambda x: f"{x:.2f}%",
                 }),
-                use_container_width=True,
+                width='stretch',
             )
     except Exception as e:
         st.error(f"Erro em Distribuicao: {e}")
