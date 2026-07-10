@@ -22,8 +22,11 @@ ESTRUTURA REAL DA PLANILHA (verificada):
 - SEM LINHAS DE TOTALIZACAO (removidas pelo usuario)
 - Agrupamento por cidade feito automaticamente via coluna C
 
+CORRECOES v0.4.2:
+- Substituido applymap() por map() (compativel Pandas 2.1+)
+
 Autor: Alex Paulo
-Versao: 0.4.0
+Versao: 0.4.2
 """
 
 import io
@@ -216,6 +219,10 @@ def identify_stores_and_channels(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd
     - Agrupamento por cidade feito automaticamente via coluna C "Cidade"
     - Retorna dicionario de cidades -> lista de lojas
 
+    CORRECAO v0.4.1:
+    - Converte valores para float ANTES de calcular media por cidade
+    - Evita erro "Cannot perform reduction 'mean' with string dtype"
+
     Args:
         df_raw: DataFrame bruto da planilha.
 
@@ -284,7 +291,14 @@ def identify_stores_and_channels(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd
             date_cols = df_stores.columns[3:]
             for col in date_cols:
                 if col in df_city.columns:
-                    city_data[col] = df_city[col].mean()
+                    # CORRECAO v0.4.1: Converter para float ANTES de calcular media
+                    valores_convertidos = df_city[col].apply(convert_percentage_string)
+                    # Filtra valores None/NaN
+                    valores_validos = valores_convertidos.dropna()
+                    if len(valores_validos) > 0:
+                        city_data[col] = valores_validos.mean()
+                    else:
+                        city_data[col] = np.nan
             
             df_channels_list.append(city_data)
         
@@ -353,8 +367,8 @@ def clean_and_structure_data(
     if len(df_stores) > 0:
         df_stores_values = df_stores.iloc[:, 3:].copy()
 
-        # Aplica conversao de valores
-        df_stores_values = df_stores_values.applymap(convert_percentage_string)
+        # CORRECAO v0.4.2: Usar map() em vez de applymap() (Pandas 2.1+)
+        df_stores_values = df_stores_values.map(convert_percentage_string)
 
         # Define indice como nomes completos das lojas ("Codigo - Nome")
         df_stores_structured = df_stores_values.copy()
@@ -369,8 +383,7 @@ def clean_and_structure_data(
     # Para df_channels (cidades): mesma logica
     if not df_channels.empty:
         df_channels_values = df_channels.iloc[:, 2:].copy()  # Pula colunas "canal", "num_lojas", "lojas"
-        df_channels_values = df_channels_values.applymap(convert_percentage_string)
-
+        # Os valores ja foram convertidos para float em identify_stores_and_channels
         df_channels_structured = df_channels_values.copy()
 
         if len(dates_index) == df_channels_values.shape[1]:
