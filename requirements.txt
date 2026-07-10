@@ -1,20 +1,22 @@
+# ============================================================================
 # DashID - Dependências Python
-# ============================
+# ============================================================================
 #
 # Para instalar todas as dependências:
 #   pip install -r requirements.txt
 #
-# Ou use o script instalar.bat (Windows)
+# Ou use o script instalar.bat (Windows) que trata automaticamente
+# erros de compatibilidade com Python 3.14+
 #
-# IMPORTANTE: Python 3.14+ requer Pillow >= 11.0.0
-# O Pillow deve ser instalado PRIMEIRO para evitar erros de compilação.
+# ============================================================================
 
 # ============================================================================
 # DEPENDÊNCIAS CRÍTICAS (INSTALAR PRIMEIRO)
 # ============================================================================
 
-# Pillow (processamento de imagens) - versão compatível com Python 3.14+
-# Deve ser instalado antes do Streamlit para evitar erros de compilação
+# Pillow (processamento de imagens) - DEVE ser >= 11.0.0 para Python 3.14+
+# Pillow 10.4.0 falha com: "RequiredDependencyException: zlib"
+# Instalado PRIMEIRO para evitar erros de compilação do Streamlit
 pillow>=11.0.0
 
 # ============================================================================
@@ -25,31 +27,40 @@ pillow>=11.0.0
 streamlit>=1.31.0
 
 # Manipulação e análise de dados
-pandas>=2.2.0
+# pandas>=2.1.0 é OBRIGATÓRIO pois usa DataFrame.map() em vez de applymap()
+# (applymap foi removido no Pandas 2.1+)
+pandas>=2.1.0
+
+# Cálculos numéricos
 numpy>=1.26.3
 
-# Leitura de arquivos Excel
+# Leitura de arquivos Excel (.xlsx)
 openpyxl>=3.1.2
 
 # Gráficos interativos
 plotly>=5.18.0
 
 # ============================================================================
-# CONECTOR SHAREPOINT (OPCIONAL)
+# CONECTOR SHAREPOINT (OPCIONAL - PARA GRAPH API COMO FALLBACK)
 # ============================================================================
+# O download direto do link de compartilhamento usa apenas 'requests'.
+# As dependências abaixo são necessárias APENAS se você quiser habilitar
+# o Microsoft Graph API como método avançado de autenticação.
 
-# Requisições HTTP para Microsoft Graph API
+# Requisições HTTP para download do SharePoint e Microsoft Graph API
 requests>=2.31.0
 
 # Gerenciamento de variáveis de ambiente (.env)
 python-dotenv>=1.0.1
 
-# Microsoft Authentication Library (recomendado para autenticação)
+# Microsoft Authentication Library (recomendado para Graph API)
 msal>=1.26.0
 
 # ============================================================================
 # DEPENDÊNCIAS DE DESENVOLVIMENTO (OPCIONAIS)
 # ============================================================================
+# Instale com: pip install -r requirements.txt[dev]
+# Ou instale manualmente se precisar desenvolver/contribuir
 
 # Formatação de código
 black>=24.1.1
@@ -62,3 +73,20 @@ mypy>=1.8.0
 
 # Testes
 pytest>=8.0.0
+
+# ============================================================================
+# NOTAS DE COMPATIBILIDADE
+# ============================================================================
+#
+# Python 3.14+:
+#   - pillow>=11.0.0 (obrigatório)
+#   - numpy>=1.26.3 (recomendado)
+#
+# Pandas 2.1+:
+#   - DataFrame.map() substitui DataFrame.applymap()
+#   - Todos os usos no DashID já foram atualizados
+#
+# Streamlit 1.31+:
+#   - st.cache_data (substitui st.cache)
+#   - st.rerun() (substitui st.experimental_rerun)
+#   - Novo suporte a temas customizados
