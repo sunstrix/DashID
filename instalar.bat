@@ -1,136 +1,162 @@
 @echo off
-chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-:: Muda para o diretório onde este script está localizado
-cd /d "%~dp0"
-
 :: ============================================================================
-:: DashID - Script de Instalação Automatizada (Windows)
+:: DashID - Script de Instalacao Automatizada (Windows)
+:: Versao com LOG para diagnostico de erros
 :: ============================================================================
-:: Este script configura o ambiente virtual, instala as dependências e
-:: cria um atalho (executar.bat) para iniciar o dashboard facilmente.
-::
-:: CORREÇÕES APLICADAS:
-:: - Suporte a Python 3.14+ (Pillow >= 11.0.0)
-:: - Atualização de pip, setuptools e wheel antes da instalação
-:: - Fallback com --only-binary :all: se Pillow falhar na compilação
-:: - Cria executar.bat para execução rápida
+:: Este script:
+:: 1. Gera um arquivo de log (instalar_log.txt) com TODAS as saidas
+:: 2. NUNCA fecha sozinho - sempre pausa no final (sucesso OU erro)
+:: 3. Mostra o log ao final para o usuario ver o que aconteceu
 ::
 :: Autor: Alex Paulo
-:: Versão: 0.2.0
+:: Versao: 0.2.2
 :: ============================================================================
 
-echo.
-echo  ================================================
-echo   DashID - Instalador Automatizado
-echo   NSF Cosmeticos e Presentes (Cp Fani)
-echo   Meta do ID: 115%%
-echo  ================================================
-echo.
+:: Muda para o diretorio do script
+cd /d "%~dp0"
 
-:: ----------------------------------------------------------------------------
-:: 1. Verificar se o Python está instalado
-:: ----------------------------------------------------------------------------
-echo [1/5] Verificando instalacao do Python...
-python --version >nul 2>&1
+:: Define o arquivo de log
+set LOGFILE=%~dp0instalar_log.txt
+
+:: Limpa log anterior e cria novo com timestamp
+echo ==================================================================== > "%LOGFILE%"
+echo  DASHID - LOG DE INSTALACAO                                           >> "%LOGFILE%"
+echo  Data/Hora: %DATE% %TIME%                                            >> "%LOGFILE%"
+echo  Diretorio: %CD%                                                     >> "%LOGFILE%"
+echo ==================================================================== >> "%LOGFILE%"
+echo. >> "%LOGFILE%"
+
+:: Funcao auxiliar para logar mensagens (echo na tela + no log)
+:: Uso: call :log "mensagem"
+goto :main
+
+:log
+echo %~1
+echo [%DATE% %TIME%] %~1 >> "%LOGFILE%"
+goto :eof
+
+:log_only
+echo [%DATE% %TIME%] %~1 >> "%LOGFILE%"
+goto :eof
+
+:main
+:: Redireciona TUDO (stdout + stderr) para o log, mas mantendo echo na tela
+:: Vamos fazer manualmente para ter controle
+
+call :log ""
+call :log "================================================"
+call :log " DashID - Instalador Automatizado"
+call :log " NSF Cosmeticos e Presentes (Cp Fani)"
+call :log " Meta do ID: 115%%"
+call :log "================================================"
+call :log ""
+
+:: --------------------------------------------------------------------
+:: 1. Verificar Python
+:: --------------------------------------------------------------------
+call :log "[1/5] Verificando instalacao do Python..."
+python --version > "%TEMP%\pyver.tmp" 2>&1
 if %errorlevel% neq 0 (
-    echo.
-    echo  [ERRO] Python nao foi encontrado no PATH do sistema.
-    echo  Por favor, instale o Python 3.11 ou superior de https://www.python.org/
-    echo  Certifique-se de marcar a opcao "Add Python to PATH" durante a instalacao.
-    echo.
-    pause
-    exit /b 1
+    call :log ""
+    call :log "[ERRO] Python nao foi encontrado no PATH do sistema."
+    call :log "Por favor, instale o Python 3.11 ou superior de https://www.python.org/"
+    call :log "Certifique-se de marcar a opcao 'Add Python to PATH'."
+    goto :error
 )
-for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set PYVER=%%v
-echo  [OK] Python %PYVER% encontrado.
-echo.
+set /p PYVER=<"%TEMP%\pyver.tmp"
+del "%TEMP%\pyver.tmp" 2>nul
+call :log "[OK] %PYVER% encontrado."
+call :log ""
 
-:: ----------------------------------------------------------------------------
-:: 2. Criar Ambiente Virtual (venv)
-:: ----------------------------------------------------------------------------
-echo [2/5] Configurando ambiente virtual...
+:: --------------------------------------------------------------------
+:: 2. Criar Ambiente Virtual
+:: --------------------------------------------------------------------
+call :log "[2/5] Configurando ambiente virtual..."
 if not exist "venv" (
-    echo  Criando ambiente virtual em 'venv'...
-    python -m venv venv
-    if %errorlevel% neq 0 (
-        echo  [ERRO] Falha ao criar o ambiente virtual.
-        pause
-        exit /b 1
+    call :log "Criando ambiente virtual em 'venv'..."
+    python -m venv venv >> "%LOGFILE%" 2>&1
+    if !errorlevel! neq 0 (
+        call :log "[ERRO] Falha ao criar o ambiente virtual."
+        goto :error
     )
-    echo  [OK] Ambiente virtual criado com sucesso.
+    call :log "[OK] Ambiente virtual criado com sucesso."
 ) else (
-    echo  [OK] Ambiente virtual 'venv' ja existe.
+    call :log "[OK] Ambiente virtual 'venv' ja existe."
 )
-echo.
+call :log ""
 
-:: ----------------------------------------------------------------------------
-:: 3. Ativar Ambiente Virtual e Atualizar ferramentas de build
-:: ----------------------------------------------------------------------------
-echo [3/5] Ativando ambiente virtual e atualizando ferramentas...
-call venv\Scripts\activate.bat
+:: --------------------------------------------------------------------
+:: 3. Ativar venv e atualizar ferramentas
+:: --------------------------------------------------------------------
+call :log "[3/5] Ativando ambiente virtual e atualizando ferramentas..."
 
-python -m pip install --upgrade pip setuptools wheel --quiet
-if %errorlevel% neq 0 (
-    echo  [AVISO] Falha ao atualizar pip/setuptools/wheel. Continuando...
+if not exist "venv\Scripts\activate.bat" (
+    call :log "[ERRO] Arquivo venv\Scripts\activate.bat nao encontrado."
+    goto :error
+)
+
+call venv\Scripts\activate.bat >> "%LOGFILE%" 2>&1
+if !errorlevel! neq 0 (
+    call :log "[ERRO] Falha ao ativar o ambiente virtual."
+    goto :error
+)
+call :log "[OK] Ambiente virtual ativado."
+
+call :log "Atualizando pip, setuptools e wheel..."
+python -m pip install --upgrade pip setuptools wheel >> "%LOGFILE%" 2>&1
+if !errorlevel! neq 0 (
+    call :log "[AVISO] Falha ao atualizar pip/setuptools/wheel. Continuando..."
 ) else (
-    echo  [OK] pip, setuptools e wheel atualizados.
+    call :log "[OK] pip, setuptools e wheel atualizados."
 )
-echo.
+call :log ""
 
-:: ----------------------------------------------------------------------------
-:: 4. Instalar Dependências (com tratamento para Pillow em Python 3.14+)
-:: ----------------------------------------------------------------------------
-echo [4/5] Instalando dependencias do projeto...
+:: --------------------------------------------------------------------
+:: 4. Instalar Dependencias
+:: --------------------------------------------------------------------
+call :log "[4/5] Instalando dependencias do projeto..."
 if not exist "requirements.txt" (
-    echo  [ERRO] Arquivo requirements.txt nao encontrado.
-    echo  Certifique-se de executar este script na raiz do projeto DashID.
-    pause
-    exit /b 1
+    call :log "[ERRO] Arquivo requirements.txt nao encontrado."
+    call :log "Certifique-se de executar este script na raiz do projeto DashID."
+    goto :error
 )
 
-echo  Isso pode levar alguns minutos. Por favor, aguarde...
-echo.
+call :log "Instalando (isso pode levar alguns minutos)..."
+call :log ""
 
-:: Tenta instalar normalmente primeiro
-pip install -r requirements.txt --quiet
-if %errorlevel% neq 0 (
-    echo.
-    echo  [AVISO] Instalacao padrao falhou (provavelmente Pillow em Python 3.14+).
-    echo  Tentando instalar Pillow com binarios pre-compilados...
-    echo.
+:: Tenta instalar tudo
+pip install -r requirements.txt >> "%LOGFILE%" 2>&1
+if !errorlevel! neq 0 (
+    call :log ""
+    call :log "[AVISO] Instalacao padrao falhou."
+    call :log "Tentando instalar Pillow com binarios pre-compilados..."
+    call :log ""
     
-    :: Instala Pillow primeiro com --only-binary
-    pip install "pillow>=11.0.0" --only-binary :all: --quiet
-    if %errorlevel% neq 0 (
-        echo  [ERRO] Falha ao instalar Pillow mesmo com --only-binary.
-        echo  Verifique sua conexao com a internet ou a versao do Python.
-        pause
-        exit /b 1
+    pip install "pillow>=11.0.0" --only-binary :all: >> "%LOGFILE%" 2>&1
+    if !errorlevel! neq 0 (
+        call :log "[ERRO] Falha ao instalar Pillow."
+        goto :error
     )
     
-    echo  [OK] Pillow instalado com sucesso via binarios pre-compilados.
-    echo  Instalando demais dependencias...
+    call :log "[OK] Pillow instalado via binarios pre-compilados."
+    call :log "Instalando demais dependencias..."
     
-    :: Instala o resto das dependências
-    pip install -r requirements.txt --quiet
-    if %errorlevel% neq 0 (
-        echo.
-        echo  [ERRO] Falha ao instalar algumas dependencias.
-        echo  Verifique sua conexao com a internet e tente novamente.
-        pause
-        exit /b 1
+    pip install -r requirements.txt >> "%LOGFILE%" 2>&1
+    if !errorlevel! neq 0 (
+        call :log "[ERRO] Falha ao instalar outras dependencias."
+        goto :error
     )
 )
 
-echo  [OK] Todas as dependencias instaladas com sucesso.
-echo.
+call :log "[OK] Todas as dependencias instaladas com sucesso."
+call :log ""
 
-:: ----------------------------------------------------------------------------
-:: 5. Criar Script de Execução (executar.bat)
-:: ----------------------------------------------------------------------------
-echo [5/5] Criando script de execucao rapida (executar.bat)...
+:: --------------------------------------------------------------------
+:: 5. Criar executar.bat
+:: --------------------------------------------------------------------
+call :log "[5/5] Criando script de execucao rapida (executar.bat)..."
 
 (
 echo @echo off
@@ -141,7 +167,7 @@ echo echo.
 echo echo  ================================================
 echo echo   Iniciando DashID...
 echo echo   Dashboard de Performance de Lojas - Cp Fani
-echo echo   Meta do ID: 115%%
+echo echo   Meta do ID: 115%%%%
 echo echo  ================================================
 echo echo.
 echo echo  O dashboard sera aberto automaticamente no seu navegador.
@@ -155,27 +181,67 @@ echo echo  Dashboard encerrado.
 echo pause
 ) > executar.bat
 
-echo  [OK] Arquivo 'executar.bat' criado.
-echo.
+if !errorlevel! neq 0 (
+    call :log "[ERRO] Falha ao criar executar.bat."
+    goto :error
+)
+call :log "[OK] Arquivo 'executar.bat' criado."
+call :log ""
 
-:: ----------------------------------------------------------------------------
-:: Finalização
-:: ----------------------------------------------------------------------------
-echo  ================================================
-echo   INSTALACAO CONCLUIDA COM SUCESSO!
-echo  ================================================
-echo.
-echo  Para iniciar o dashboard, basta executar:
-echo.
-echo     executar.bat
-echo.
-echo  Ou abra o terminal na pasta do projeto e digite:
-echo     streamlit run app.py
-echo.
-echo  O dashboard sera aberto automaticamente no seu navegador.
-echo.
-echo  ================================================
-echo.
+:: --------------------------------------------------------------------
+:: SUCESSO
+:: --------------------------------------------------------------------
+goto :success
 
-pause
+:success
+call :log ""
+call :log "================================================"
+call :log "  INSTALACAO CONCLUIDA COM SUCESSO!"
+call :log "================================================"
+call :log ""
+call :log "Para iniciar o dashboard, basta executar:"
+call :log ""
+call :log "   executar.bat"
+call :log ""
+call :log "Ou abra o terminal na pasta do projeto e digite:"
+call :log "   streamlit run app.py"
+call :log ""
+call :log "================================================"
+goto :show_log
+
+:error
+call :log ""
+call :log "================================================"
+call :log "  ERRO DURANTE A INSTALACAO"
+call :log "================================================"
+call :log ""
+call :log "Verifique o arquivo de log para mais detalhes:"
+call :log "   %LOGFILE%"
+call :log ""
+call :log "Possiveis causas:"
+call :log "  - Python nao instalado ou nao esta no PATH"
+call :log "  - Sem conexao com a internet"
+call :log "  - Permissoes insuficientes (tente executar como Admin)"
+call :log "  - Antivirus bloqueando a instalacao"
+call :log ""
+call :log "================================================"
+goto :show_log
+
+:show_log
+echo.
+echo.
+echo ============================================================
+echo  LOG DA INSTALACAO (ultimas 30 linhas):
+echo ============================================================
+echo.
+:: Mostra as ultimas 30 linhas do log
+powershell -command "Get-Content '%LOGFILE%' -Tail 30"
+echo.
+echo ============================================================
+echo  Log completo salvo em: %LOGFILE%
+echo ============================================================
+echo.
+echo Pressione qualquer tecla para SAIR...
+pause >nul
 endlocal
+exit /b
