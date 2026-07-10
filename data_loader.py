@@ -22,11 +22,16 @@ ESTRUTURA REAL DA PLANILHA (verificada):
 - SEM LINHAS DE TOTALIZACAO (removidas pelo usuario)
 - Agrupamento por cidade feito automaticamente via coluna C
 
+CORRECOES v0.4.4:
+- parse_date_string() melhorada: tenta multiplos formatos de data
+- Logging detalhado de cada coluna convertida/falhada
+- Tratamento robusto de inconsistencias (filtra colunas invalidas)
+- Garante que apenas colunas 100% validas sejam usadas
+
 CORRECOES v0.4.3:
 - Adicionada funcao parse_date_string() para converter "1-Jul" em Timestamp
 - Conversao explicita de colunas de datas para Timestamp (evita str vs datetime)
 - Conversao explicita para float64 (evita dtype object)
-- Log detalhado das datas convertidas
 
 CORRECOES v0.4.2:
 - Substituido applymap() por map() (compativel Pandas 2.1+)
@@ -39,7 +44,7 @@ CORRECOES v0.4.0:
 - Agrupamento por cidade feito automaticamente via coluna C "Cidade"
 
 Autor: Alex Paulo
-Versao: 0.4.3
+Versao: 0.4.4
 """
 
 import io
@@ -153,14 +158,14 @@ def convert_percentage_string(value) -> Optional[float]:
 
 
 # ============================================================================
-# CONVERSAO DE DATAS (STRING "1-Jul" -> TIMESTAMP)
+# CONVERSAO DE DATAS (STRING "1-Jul" -> TIMESTAMP) - v0.4.4
 # ============================================================================
 
 
 def parse_date_string(date_str) -> Optional[pd.Timestamp]:
     """Converte string de data (ex: '1-Jul', '2-Jul') para Timestamp.
     
-    Assume ano 2026 para datas sem ano especificado.
+    CORRECAO v0.4.4: Tenta multiplos formatos para garantir conversao.
     
     Args:
         date_str: String de data (ex: "1-Jul", "2-Jul", "10-Jul")
@@ -185,20 +190,47 @@ def parse_date_string(date_str) -> Optional[pd.Timestamp]:
         if not date_str:
             return None
         
-        # Tenta parsear no formato "dia-mes" (ex: "1-Jul", "10-Jul")
-        # Assume ano 2026
-        parsed = pd.to_datetime(date_str + "-2026", format="%d-%b-%Y", errors="coerce")
+        # Lista de formatos para tentar (do mais especifico ao mais generico)
+        formatos = [
+            "%d-%b-%Y",  # "1-Jul-2026" (ingles)
+            "%d/%b/%Y",  # "1/Jul/2026" (ingles)
+            "%d-%b-%y",  # "1-Jul-26" (ano com 2 digitos)
+            "%d/%b/%y",  # "1/Jul/26" (ano com 2 digitos)
+        ]
         
-        if pd.notna(parsed):
-            return parsed
+        # Tenta cada formato com ano 2026
+        for formato in formatos:
+            try:
+                # Adiciona ano se necessario
+                if "%Y" in formato or "%y" in formato:
+                    data_com_ano = date_str
+                else:
+                    data_com_ano = f"{date_str}-2026"
+                
+                parsed = pd.to_datetime(data_com_ano, format=formato, errors="coerce")
+                
+                if pd.notna(parsed):
+                    logger.debug(f"Data '{date_str}' convertida com formato '{formato}': {parsed}")
+                    return parsed
+            except:
+                continue
         
-        # Tenta formato alternativo "dia/mes" (ex: "1/Jul")
-        parsed = pd.to_datetime(date_str + "/2026", format="%d/%b/%Y", errors="coerce")
+        # Se nenhum formato funcionou, tenta parser generico do pandas
+        try:
+            # Tenta parsear sem formato especifico (pandas tenta adivinhar)
+            parsed = pd.to_datetime(date_str + "-2026", errors="coerce")
+            if pd.notna(parsed):
+                logger.debug(f"Data '{date_str}' convertida com parser generico: {parsed}")
+                return parsed
+        except:
+            pass
         
-        return parsed if pd.notna(parsed) else None
+        # Se nada funcionou, retorna None
+        logger.warning(f"Nao foi possivel converter data: '{date_str}'")
+        return None
         
     except Exception as e:
-        logger.debug(f"Erro ao converter data '{date_str}': {e}")
+        logger.error(f"Erro inesperado ao converter data '{date_str}': {e}")
         return None
 
 
@@ -390,10 +422,11 @@ def clean_and_structure_data(
     - DataFrame com cidades (indice = cidade, colunas = datas)
     - Indice de datas (colunas)
 
-    CORRECAO v0.4.3:
-    - Converte colunas de data para Timestamp usando parse_date_string()
-    - Converte valores explicitamente para float64
-    - Log detalhado das datas convertidas
+    CORRECAO v0.4.4:
+    - Logging detalhado de cada coluna (sucesso/falha)
+    - Filtra APENAS colunas que foram convertidas com sucesso
+    - Garante consistencia total entre colunas e valores
+    - Log de todas as colunas processadas
 
     Args:
         df_stores: DataFrame com lojas individuais.
@@ -413,32 +446,42 @@ def clean_and_structure_data(
 
     # Colunas de data sao todas exceto as 3 primeiras (codigo, loja, cidade)
     date_columns_raw = df_stores.columns[3:]
+    
+    logger.info(f"Colunas de data brutas encontradas: {len(date_columns_raw)}")
+    logger.info(f"Nomes das colunas: {list(date_columns_raw)}")
 
-    # CORRECAO v0.4.3: Converte colunas de data para Timestamp
-    dates = []
-    date_columns_converted = []
+    # CORRECAO v0.4.4: Converte colunas de data e identifica quais sao validas
+    valid_date_columns = []  # Nomes originais das colunas validas
+    valid_dates = []  # Timestamps convertidos
     
     for col in date_columns_raw:
         # Usa parse_date_string() para converter "1-Jul" em Timestamp
         parsed_date = parse_date_string(col)
+        
         if parsed_date is not None:
-            dates.append(parsed_date)
-            date_columns_converted.append(parsed_date)
+            valid_date_columns.append(col)
+            valid_dates.append(parsed_date)
+            logger.info(f"✓ Coluna '{col}' convertida com sucesso para {parsed_date}")
         else:
-            # Se nao conseguir converter, usa NaT
-            dates.append(pd.NaT)
-            date_columns_converted.append(pd.NaT)
+            logger.error(f"✗ Coluna '{col}' FALHOU na conversao - sera ignorada")
 
-    # Cria indice de datas (remove NaT)
-    dates_index = pd.Index([d for d in dates if pd.notna(d)])
+    logger.info(f"Resultado da conversao: {len(valid_date_columns)} de {len(date_columns_raw)} colunas validas")
     
-    logger.info(f"Datas convertidas: {len(dates_index)} datas validas encontradas")
-    if len(dates_index) > 0:
-        logger.info(f"Periodo: {dates_index.min()} a {dates_index.max()}")
+    if len(valid_date_columns) == 0:
+        logger.error("NENHUMA coluna de data foi convertida! Verifique o formato das datas.")
+        return pd.DataFrame(), pd.DataFrame(), pd.Index([])
 
-    # Para df_stores: extrai valores e converte de string com "%" para float
-    if len(df_stores) > 0:
-        df_stores_values = df_stores.iloc[:, 3:].copy()
+    # Cria indice de datas (apenas datas validas)
+    dates_index = pd.Index(valid_dates)
+    
+    logger.info(f"Periodo: {dates_index.min()} a {dates_index.max()}")
+
+    # Para df_stores: extrai APENAS colunas validas e converte para float
+    if len(df_stores) > 0 and len(valid_date_columns) > 0:
+        # CORRECAO v0.4.4: Filtra APENAS colunas que foram convertidas com sucesso
+        df_stores_values = df_stores[valid_date_columns].copy()
+        
+        logger.info(f"DataFrame de lojas antes da conversao: shape={df_stores_values.shape}, colunas={list(df_stores_values.columns)}")
 
         # CORRECAO v0.4.2: Usar map() em vez de applymap() (Pandas 2.1+)
         df_stores_values = df_stores_values.map(convert_percentage_string)
@@ -450,33 +493,25 @@ def clean_and_structure_data(
         df_stores_structured = df_stores_values.copy()
         df_stores_structured.index = store_names
 
-        # Define colunas como datas convertidas (apenas datas validas)
-        valid_dates = [d for d in date_columns_converted if pd.notna(d)]
-        if len(valid_dates) == df_stores_values.shape[1]:
-            df_stores_structured.columns = pd.Index(valid_dates)
-        else:
-            # Se houver inconsistencia, usa apenas as datas validas
-            logger.warning(f"Inconsistencia: {len(valid_dates)} datas validas, mas {df_stores_values.shape[1]} colunas")
-            df_stores_structured = df_stores_structured.loc[:, [c for c in df_stores_structured.columns if pd.notna(c)]]
+        # Define colunas como datas convertidas (garantido que tem o mesmo tamanho)
+        df_stores_structured.columns = dates_index
+        
+        logger.info(f"DataFrame de lojas DEPOIS da conversao: shape={df_stores_structured.shape}, dtype={df_stores_structured.dtypes.iloc[0]}")
     else:
         df_stores_structured = pd.DataFrame()
 
     # Para df_channels (cidades): mesma logica
-    if not df_channels.empty:
-        df_channels_values = df_channels.iloc[:, 2:].copy()  # Pula colunas "canal", "num_lojas", "lojas"
-        # Os valores ja foram convertidos para float em identify_stores_and_channels
+    if not df_channels.empty and len(valid_date_columns) > 0:
+        # Filtra APENAS colunas validas
+        df_channels_values = df_channels[valid_date_columns].copy()
         
         # CORRECAO v0.4.3: Converter explicitamente para float64
         df_channels_values = df_channels_values.astype('float64')
         
         df_channels_structured = df_channels_values.copy()
-
-        valid_dates = [d for d in date_columns_converted if pd.notna(d)]
-        if len(valid_dates) == df_channels_values.shape[1]:
-            df_channels_structured.columns = pd.Index(valid_dates)
-        else:
-            logger.warning(f"Inconsistencia em canais: {len(valid_dates)} datas validas, mas {df_channels_values.shape[1]} colunas")
-            df_channels_structured = df_channels_structured.loc[:, [c for c in df_channels_structured.columns if pd.notna(c)]]
+        df_channels_structured.columns = dates_index
+        
+        logger.info(f"DataFrame de cidades DEPOIS da conversao: shape={df_channels_structured.shape}")
     else:
         df_channels_structured = pd.DataFrame()
 
