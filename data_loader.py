@@ -326,8 +326,8 @@ def clean_and_structure_data(
     if len(df_stores) > 0:
         df_stores_values = df_stores.iloc[:, 3:].copy()
 
-        # Aplica conversão de valores
-        df_stores_values = df_stores_values.applymap(convert_percentage_string)
+        # Aplica conversão de valores usando map() (Pandas 2.1+)
+        df_stores_values = df_stores_values.map(convert_percentage_string)
 
         # Define índice como nomes das lojas
         df_stores_structured = df_stores_values.copy()
@@ -342,7 +342,7 @@ def clean_and_structure_data(
     # Para df_channels: mesma lógica
     if len(df_channels) > 0:
         df_channels_values = df_channels.iloc[:, 3:].copy()
-        df_channels_values = df_channels_values.applymap(convert_percentage_string)
+        df_channels_values = df_channels_values.map(convert_percentage_string)
 
         df_channels_structured = df_channels_values.copy()
         df_channels_structured.index = channel_names
