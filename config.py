@@ -7,15 +7,21 @@ de negocio utilizados em todo o dashboard.
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
+ESTRATEGIA DE FONTE DE DADOS (v0.3.0):
+1. Leitura LOCAL (prioritaria) - arquivo sincronizado pelo OneDrive/SharePoint
+2. SharePoint via HTTP (fallback) - apenas se arquivo local nao existir
+
 Autor: Alex Paulo
-Versao: 0.2.7
+Versao: 0.3.0
 """
+
+from pathlib import Path
 
 # ============================================================================
 # INFORMACOES DO PROJETO
 # ============================================================================
 PROJECT_NAME = "DashID"
-PROJECT_VERSION = "0.2.7"
+PROJECT_VERSION = "0.3.0"
 PROJECT_DESCRIPTION = (
     "Dashboard de analise de performance diaria de lojas da "
     "NSF Cosmeticos e Presentes (Cp Fani)"
@@ -138,47 +144,68 @@ CHANNEL_LABELS = {
 }
 
 # ============================================================================
-# CONFIGURACOES DE SHAREPOINT
+# CONFIGURACOES DE ARQUIVO LOCAL (FONTE PRINCIPAL)
+# ============================================================================
+#
+# ESTRATEGIA: O dashboard le PRIMARIAMENTE um arquivo local sincronizado
+# pelo OneDrive/SharePoint. Isso evita problemas de:
+# - Links de compartilhamento expirados
+# - Autenticacao HTTP
+# - Timeouts e erros de rede
+#
+# O arquivo local e mantido atualizado automaticamente pelo OneDrive
+# sempre que alguem edita no SharePoint.
+#
+# CAMINHO DO ARQUIVO:
+#   %USERPROFILE%\NSF cosméticos e presentes LTDA\
+#   NSF Cosméticos e Presentes LTDA - Documentos\
+#   Departamento Pessoal\EMILY - Multi Lojas\
+#   relatório ID Relatório de projeção.xlsx
+#
+# ============================================================================
+
+# Caminho base do usuario (equivalente a $env:USERPROFILE no PowerShell)
+# Path.home() retorna: C:\Users\AlexPaulo (Windows) ou /home/user (Linux/Mac)
+_USER_HOME = Path.home()
+
+LOCAL_CONFIG = {
+    # Habilitar leitura local como fonte principal
+    "ENABLED": True,
+
+    # Caminho completo do arquivo Excel
+    # Construido de forma cross-platform usando pathlib
+    "FILE_PATH": (
+        _USER_HOME
+        / "NSF cosméticos e presentes LTDA"
+        / "NSF Cosméticos e Presentes LTDA - Documentos"
+        / "Departamento Pessoal"
+        / "EMILY - Multi Lojas"
+        / "relatório ID Relatório de projeção.xlsx"
+    ),
+
+    # Nome da aba da planilha a ser lida
+    "SHEET_NAME": "Planilha1",
+}
+
+# ============================================================================
+# CONFIGURACOES DE SHAREPOINT (FALLBACK - usado apenas se local falhar)
 # ============================================================================
 #
 # IMPORTANTE - COMO OBTER A URL CORRETA DO SHAREPOINT:
 #
-# 1. Abra o arquivo "Relatorio de projecao mes julho 26.xlsx" no SharePoint
-#    (https://didiernsf.sharepoint.com)
-#
+# 1. Abra o arquivo no SharePoint (https://didiernsf.sharepoint.com)
 # 2. Clique no botao "Compartilhar" (ou "Share") no canto superior direito
-#
-# 3. Na janela de compartilhamento, clique em "Qualquer pessoa com o link
-#    pode editar" (ou similar) para ajustar as permissoes
-#
-# 4. Selecione "Qualquer pessoa" e marque "Permitir download" (IMPORTANTE!)
-#
-# 5. Clique em "Aplicar" e depois em "Copiar link"
-#
-# 6. Cole o link abaixo no campo SHARE_URL
-#
-# FORMATO CORRETO da URL (exemplo):
-#   https://didiernsf.sharepoint.com/:x:/s/NSFcosmticosepresentesLTDA/
-#   IQAP_RPH98laR7KvkRvgyaUqAYM5B2REUbXMGolJdXTTFHQ?e=JNPga6
+# 3. Selecione "Qualquer pessoa" e marque "Permitir download"
+# 4. Clique em "Aplicar" e depois em "Copiar link"
+# 5. Cole o link abaixo no campo SHARE_URL
 #
 # O dashboard adiciona automaticamente &download=1 para forcar o download
 # direto do arquivo (evita receber pagina HTML).
 #
-# FORMATO INCORRETO (NAO USAR):
-#   {713fd0fc-9f7f-475a-b2af-911be0c9a52a}  <- Isso e um GUID, nao URL!
-#
 # ============================================================================
 
 SHAREPOINT_CONFIG = {
-    # Link de compartilhamento direto do SharePoint
-    #
-    # COLE AQUI a URL completa copiada do botao "Compartilhar" do SharePoint
-    # A URL deve comecar com "https://" e conter "/:x:/" (indica arquivo Excel)
-    #
-    # O dashboard ira automaticamente adicionar &download=1 para forcar
-    # o download binario do arquivo (evita pagina HTML de visualizacao).
-    #
-    # URL atual (atualizada com novo token e=JNPga6):
+    # Link de compartilhamento direto do SharePoint (FALLBACK)
     "SHARE_URL": (
         "https://didiernsf.sharepoint.com/:x:/s/"
         "NSFcosmticosepresentesLTDA/"
@@ -186,7 +213,7 @@ SHAREPOINT_CONFIG = {
         "?e=JNPga6"
     ),
 
-    # Diretorio local para cache do arquivo
+    # Diretorio local para cache do arquivo baixado do SharePoint
     "CACHE_DIR": "data",
     "CACHE_FILENAME": "relatorio_sharepoint.xlsx",
 
@@ -201,7 +228,7 @@ SHAREPOINT_CONFIG = {
 }
 
 # ============================================================================
-# VALIDACAO DA URL DO SHAREPOINT
+# VALIDACAO DA CONFIGURACAO DE FONTES DE DADOS
 # ============================================================================
 
 
@@ -239,7 +266,76 @@ def validate_sharepoint_url():
     return True, "URL valida"
 
 
-# Executa validacao ao importar o modulo
+def validate_local_file():
+    """Valida se o arquivo local existe e e acessivel.
+
+    Returns:
+        Tupla (is_valid, error_message, file_path)
+    """
+    file_path = LOCAL_CONFIG.get("FILE_PATH")
+
+    if not file_path:
+        return False, "FILE_PATH nao configurado em LOCAL_CONFIG", None
+
+    # Converte para Path se for string
+    if isinstance(file_path, str):
+        file_path = Path(file_path)
+
+    if not file_path.exists():
+        return False, f"Arquivo local nao encontrado: {file_path}", file_path
+
+    if not file_path.is_file():
+        return False, f"Caminho nao e um arquivo: {file_path}", file_path
+
+    # Verifica se e um arquivo Excel
+    if file_path.suffix.lower() not in [".xlsx", ".xlsm"]:
+        return False, f"Arquivo nao e Excel (.xlsx/.xlsm): {file_path}", file_path
+
+    return True, "Arquivo local valido", file_path
+
+
+def get_data_source_info():
+    """Retorna informacoes sobre a fonte de dados disponivel.
+
+    Returns:
+        Dicionario com informacoes sobre qual fonte sera usada.
+    """
+    info = {
+        "local_enabled": LOCAL_CONFIG.get("ENABLED", True),
+        "local_available": False,
+        "local_path": str(LOCAL_CONFIG.get("FILE_PATH", "")),
+        "local_error": None,
+        "sharepoint_url": SHAREPOINT_CONFIG.get("SHARE_URL", ""),
+        "sharepoint_valid": False,
+        "sharepoint_error": None,
+        "primary_source": None,
+    }
+
+    # Valida arquivo local
+    if info["local_enabled"]:
+        local_valid, local_msg, _ = validate_local_file()
+        info["local_available"] = local_valid
+        if not local_valid:
+            info["local_error"] = local_msg
+
+    # Valida URL do SharePoint
+    sp_valid, sp_msg = validate_sharepoint_url()
+    info["sharepoint_valid"] = sp_valid
+    if not sp_valid:
+        info["sharepoint_error"] = sp_msg
+
+    # Define fonte primaria
+    if info["local_enabled"] and info["local_available"]:
+        info["primary_source"] = "local"
+    elif info["sharepoint_valid"]:
+        info["primary_source"] = "sharepoint"
+    else:
+        info["primary_source"] = "none"
+
+    return info
+
+
+# Executa validacoes ao importar o modulo
 _url_valid, _url_error = validate_sharepoint_url()
 if not _url_valid:
     import warnings
@@ -248,6 +344,9 @@ if not _url_valid:
         UserWarning,
         stacklevel=2
     )
+
+# Informacoes de fonte de dados (disponivel para outros modulos)
+DATA_SOURCE_INFO = get_data_source_info()
 
 # ============================================================================
 # CONFIGURACOES DE CACHE
