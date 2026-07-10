@@ -1,13 +1,10 @@
 """
-DashID - Aplicacao Principal Streamlit (v0.3.0)
+DashID - Aplicacao Principal Streamlit (v0.3.1)
 ================================================
 
 ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
-1. ARQUIVO LOCAL (prioritaria) - lido do OneDrive/SharePoint sincronizado
-   Caminho: %USERPROFILE%\NSF cosméticos e presentes LTDA\
-            NSF Cosméticos e Presentes LTDA - Documentos\
-            Departamento Pessoal\EMILY - Multi Lojas\
-            relatório ID Relatório de projeção.xlsx
+1. ARQUIVO LOCAL (prioritario) - lido do OneDrive/SharePoint sincronizado
+   (caminho configurado em config.py via LOCAL_CONFIG - pathlib.Path)
 
 2. SHAREPOINT VIA HTTP (fallback) - download direto do link
    Usado apenas se arquivo local nao existir
@@ -18,7 +15,7 @@ ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
 Autor: Alex Paulo
-Versao: 0.3.0
+Versao: 0.3.1
 """
 
 import streamlit as st
@@ -1034,6 +1031,9 @@ def main():
             error_msg = st.session_state.get("load_error", None)
 
             if error_msg:
+                # Converte Path para string de forma segura
+                local_path_str = str(LOCAL_CONFIG.get('FILE_PATH', 'N/A'))
+                
                 st.markdown(
                     f"""
                     <div style="text-align: center; padding: 40px 20px;">
@@ -1049,7 +1049,7 @@ def main():
                         <div style="background: {Colors.CARD_BG}; padding: 15px; border-radius: 8px; 
                                     margin: 20px auto; max-width: 700px; text-align: left;">
                             <p style="color: {Colors.PRIMARY};"><strong>📍 Caminho esperado do arquivo local:</strong></p>
-                            <code style="color: {Colors.TEXT_PRIMARY}; font-size: 0.85rem;">{LOCAL_CONFIG.get('FILE_PATH', 'N/A')}</code>
+                            <code style="color: {Colors.TEXT_PRIMARY}; font-size: 0.85rem;">{local_path_str}</code>
                         </div>
                         <p style="color: {Colors.PRIMARY}; font-size: 1rem; margin-top: 20px; font-weight: 600;">
                             👈 Use o "Upload Manual" na barra lateral
