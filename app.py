@@ -1,5 +1,5 @@
 """
-DashID - Aplicacao Principal Streamlit (v0.3.4)
+DashID - Aplicacao Principal Streamlit (v0.4.0)
 ================================================
 
 ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
@@ -14,15 +14,14 @@ ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
-CORRECOES APLICADAS (v0.3.4):
-- Funcao _get_base_layout() para evitar conflito de parametros duplicados
-- Todas as 8 secoes corrigidas para usar DUAS chamadas separadas:
-  1. fig.update_layout(_get_base_layout())
-  2. fig.update_layout(title="...", xaxis="...", ...)
-- Evita erro: "got multiple values for keyword argument"
+ATUALIZACOES v0.4.0:
+- Nomes das lojas no formato "Codigo - Nome" (ex: "12605 - Coop Joaquim Nabuco")
+- Agrupamento por cidade via coluna C "Cidade" (sem linhas de totalizacao)
+- Filtro de lojas com TODAS selecionadas por padrao
+- Comparativo por Canal agora mostra cidades (SBC, Sao Paulo)
 
 Autor: Alex Paulo
-Versao: 0.3.4
+Versao: 0.4.0
 """
 
 import streamlit as st
@@ -112,9 +111,6 @@ except Exception as e:
 def _get_base_layout():
     """Retorna o layout base do template Plotly.
     
-    Importante: Esta funcao retorna uma copia do template para evitar
-    conflitos quando combinado com outros parametros em update_layout().
-    
     Returns:
         Dicionario com configuracoes base do template.
     """
@@ -129,15 +125,9 @@ def _get_base_layout():
 def load_data_with_fallback():
     """Carrega dados seguindo a estrategia de prioridade.
 
-    Ordem:
-    1. Tenta arquivo local (rapido e confiavel)
-    2. Se falhar, tenta SharePoint via HTTP (fallback)
-    3. Retorna dados + info da fonte usada
-
     Returns:
         Tupla (data_dict, source_used, error_message)
     """
-    # VERIFICA FONTES DISPONIVEIS
     sources = check_data_sources()
     logger.info(f"Fontes disponiveis: {sources}")
 
@@ -152,7 +142,6 @@ def load_data_with_fallback():
             error_msg = f"Erro ao ler arquivo local: {e}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            # Continua para proxima tentativa
     else:
         logger.warning(f"Arquivo local nao disponivel: {sources.get('local_error')}")
 
@@ -166,7 +155,6 @@ def load_data_with_fallback():
             file_content, metadata = load_data_from_sharepoint_link(share_url)
 
             if file_content is not None:
-                # Cria objeto fake para o data_loader
                 class FakeUploadedFile:
                     def __init__(self, content, name, size):
                         self._content = content
@@ -198,7 +186,6 @@ def load_data_with_fallback():
         logger.error(f"Erro no fallback do SharePoint: {e}")
         logger.error(traceback.format_exc())
 
-    # TODAS AS TENTATIVAS FALHARAM
     return None, None, "Nenhuma fonte de dados disponivel"
 
 
@@ -258,7 +245,7 @@ def render_sidebar():
             if "data" in st.session_state:
                 source = st.session_state.get("source_used", "desconhecido")
                 source_icons = {
-                    "local": "💻",
+                    "local": "",
                     "sharepoint": "☁️",
                     "upload": "📁",
                 }
@@ -274,7 +261,6 @@ def render_sidebar():
 
                 metadata = st.session_state["data"]["metadata"]
 
-                # Mostra caminho se for local
                 if source == "local":
                     st.caption(f"📍 {metadata.get('file_path', '-')}")
                     if metadata.get('last_modified'):
@@ -286,7 +272,6 @@ def render_sidebar():
                 for key in keys_to_remove:
                     if key in st.session_state:
                         del st.session_state[key]
-                # Limpa caches
                 try:
                     load_data_from_local.clear()
                     load_data_from_upload.clear()
@@ -294,11 +279,9 @@ def render_sidebar():
                     pass
                 st.rerun()
 
-            # UPLOAD MANUAL (sempre disponivel como opcao)
-            with st.expander("📁 Upload Manual (substituir fonte)"):
-                st.caption(
-                    "Envie uma planilha Excel (.xlsx) para substituir a fonte atual."
-                )
+            # UPLOAD MANUAL
+            with st.expander(" Upload Manual (substituir fonte)"):
+                st.caption("Envie uma planilha Excel (.xlsx) para substituir a fonte atual.")
                 uploaded_file = st.file_uploader(
                     "Arquivo local (.xlsx)",
                     type=["xlsx", "xlsm"],
@@ -327,12 +310,12 @@ def render_sidebar():
                 [
                     "📊 Visao Geral",
                     "📈 Analise Horizontal",
-                    "📅 Dia da Semana",
+                    " Dia da Semana",
                     "🏆 Ranking de Lojas",
                     "📉 Medias Moveis e Tendencia",
-                    "⚠️ Alertas e Consistencia",
-                    "🏢 Comparativo por Canal",
-                    "📊 Distribuicao",
+                    "️ Alertas e Consistencia",
+                    " Comparativo por Canal",
+                    " Distribuicao",
                 ],
                 index=0,
             )
@@ -359,12 +342,17 @@ def render_sidebar():
                         except:
                             date_end = str(dr[1])
 
+                    # Mostra cidades se disponivel
+                    cities_info = ""
+                    if metadata.get("cities"):
+                        cities_info = f"\n- **Cidades:** {', '.join(metadata['cities'])}"
+
                     st.markdown(
                         f"""
                         - **Arquivo:** {metadata.get('filename', '-')}
                         - **Tamanho:** {metadata.get('file_size_mb', 0):.2f} MB
                         - **Lojas:** {metadata.get('num_stores', 0)}
-                        - **Canais:** {metadata.get('num_channels', 0)}
+                        - **Canais:** {metadata.get('num_channels', 0)}{cities_info}
                         - **Dias com dados:** {metadata.get('num_days', 0)}
                         - **Periodo:** {date_start} a {date_end}
                         - **🎯 Meta:** {META_ID*100:.0f}%
@@ -373,19 +361,26 @@ def render_sidebar():
                 except Exception as e:
                     st.error(f"Erro ao mostrar metadados: {e}")
 
-            # FILTROS DE LOJA
+            # FILTROS DE LOJA - TODAS SELECIONADAS POR PADRAO
             if "data" in st.session_state:
                 try:
                     st.markdown("---")
                     st.markdown("### 🔍 Filtros")
                     store_names = st.session_state["data"]["store_names"]
+                    
+                    # v0.4.0: TODAS as lojas selecionadas por padrao
                     selected_stores = st.multiselect(
                         "Selecione as lojas:",
                         options=store_names,
-                        default=store_names[:5] if len(store_names) > 5 else store_names,
-                        help="Deixe vazio para ver todas as lojas.",
+                        default=store_names,  # Todas selecionadas
+                        help="Todas as lojas estao selecionadas por padrao.",
                     )
-                    st.session_state["selected_stores"] = selected_stores if selected_stores else store_names
+                    
+                    # Se usuario desmarcar tudo, usa todas
+                    if not selected_stores:
+                        selected_stores = store_names
+                    
+                    st.session_state["selected_stores"] = selected_stores
                 except Exception as e:
                     st.error(f"Erro nos filtros: {e}")
 
@@ -423,7 +418,7 @@ def meta_label() -> str:
 
 
 # ============================================================================
-# SECOES DO DASHBOARD (com protecao contra erros)
+# SECOES DO DASHBOARD
 # ============================================================================
 
 
@@ -450,7 +445,7 @@ def render_visao_geral(df_stores: pd.DataFrame):
         with col2:
             st.metric(
                 label="Melhor Loja",
-                value=kpis["melhor_loja"]["nome"][:20],
+                value=kpis["melhor_loja"]["nome"][:30],
                 delta=format_percentage(kpis["melhor_loja"]["valor"]),
             )
 
@@ -458,7 +453,7 @@ def render_visao_geral(df_stores: pd.DataFrame):
             pior_acima_meta = kpis["pior_loja"]["valor"] >= META_ID
             st.metric(
                 label="Pior Loja",
-                value=kpis["pior_loja"]["nome"][:20],
+                value=kpis["pior_loja"]["nome"][:30],
                 delta=format_percentage(kpis["pior_loja"]["valor"]),
                 delta_color="normal" if pior_acima_meta else "inverse",
             )
@@ -507,7 +502,6 @@ def render_visao_geral(df_stores: pd.DataFrame):
             annotation_font_color=Colors.WARNING,
         )
 
-        # CORRECAO: Duas chamadas separadas para evitar conflito
         fig.update_layout(_get_base_layout())
         fig.update_layout(
             title=f"Indice Medio de Atingimento - Evolucao Diaria (Meta: {META_ID*100:.0f}%)",
@@ -519,7 +513,7 @@ def render_visao_geral(df_stores: pd.DataFrame):
         st.plotly_chart(fig, use_container_width=True)
 
         # Tabela resumo por loja
-        st.subheader(" Performance por Loja (Ultimo Dia)")
+        st.subheader("📋 Performance por Loja (Ultimo Dia)")
         has_data = df_stores.notna().any()
         dates_with_data = has_data[has_data].index
         if len(dates_with_data) > 0:
@@ -548,7 +542,7 @@ def render_visao_geral(df_stores: pd.DataFrame):
 def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
     """Renderiza a secao de Analise Horizontal."""
     try:
-        st.header(" Analise Horizontal (Dia a Dia)")
+        st.header("📈 Analise Horizontal (Dia a Dia)")
         st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Variacao = (dia atual / dia anterior) - 1")
 
         df_variation = calculate_daily_variation(df_stores)
@@ -561,7 +555,7 @@ def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
             col1, col2 = st.columns(2)
 
             with col1:
-                st.markdown("** Maiores Altas**")
+                st.markdown("**🟢 Maiores Altas**")
                 if top_movers["maiores_altas"]:
                     for loja, var in top_movers["maiores_altas"]:
                         st.markdown(f"- **{loja}**: {format_variation(var)}")
@@ -602,7 +596,6 @@ def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
             annotation_font_color=Colors.WARNING,
         )
 
-        # CORRECAO: Duas chamadas separadas para evitar conflito
         fig.update_layout(_get_base_layout())
         fig.update_layout(
             title=f"Evolucao Diaria do Indice por Loja (Meta: {META_ID*100:.0f}%)",
@@ -647,7 +640,6 @@ def render_dia_da_semana(df_stores: pd.DataFrame, selected_stores: list):
                 annotation_font_color=Colors.WARNING,
             )
 
-            # CORRECAO: Duas chamadas separadas
             fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title=f"Indice Medio por Dia da Semana (Meta: {META_ID*100:.0f}%)",
@@ -719,7 +711,6 @@ def render_ranking(df_stores: pd.DataFrame):
                 annotation_font_color=Colors.WARNING,
             )
 
-            # CORRECAO: Duas chamadas separadas
             fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title=f"Ranking de Lojas por Indice Medio (Meta: {META_ID*100:.0f}%)",
@@ -738,7 +729,7 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
     """Renderiza a secao de Medias Moveis e Tendencia."""
     try:
         st.header("📉 Medias Moveis e Tendencia")
-        st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Suavizacao e regressao linear")
+        st.caption(f" Meta do ID: {META_ID*100:.0f}% | Suavizacao e regressao linear")
 
         stores_for_ma = [s for s in selected_stores if s in df_stores.index]
         if not stores_for_ma:
@@ -795,7 +786,6 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
                 annotation_font_color=Colors.WARNING,
             )
 
-            # CORRECAO: Duas chamadas separadas
             fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title=f"Medias Moveis - {loja_selecionada} (Meta: {META_ID*100:.0f}%)",
@@ -887,7 +877,7 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
             ultimo_dia = df_stores[last_date].dropna()
             abaixo_meta = ultimo_dia[ultimo_dia < META_ID]
 
-            st.subheader(f"🚨 Lojas Abaixo da Meta (<{META_ID*100:.0f}%) no Ultimo Dia")
+            st.subheader(f" Lojas Abaixo da Meta (<{META_ID*100:.0f}%) no Ultimo Dia")
 
             if len(abaixo_meta) > 0:
                 df_abaixo = pd.DataFrame({
@@ -941,7 +931,6 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
                 )
             )
 
-            # CORRECAO: Duas chamadas separadas
             fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title="Volatilidade por Loja (Desvio Padrao)",
@@ -957,17 +946,16 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
 
 
 def render_comparativo_canal(df_stores: pd.DataFrame, df_channels: pd.DataFrame):
-    """Renderiza a secao de Comparativo por Canal."""
+    """Renderiza a secao de Comparativo por Canal/Cidade."""
     try:
-        st.header("🏢 Comparativo por Canal/Regiao")
-        st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Agregacao por canal")
+        st.header("🏢 Comparativo por Cidade")
+        st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Agrupamento por cidade (coluna C)")
 
-        df_channel_agg = aggregate_by_channel(df_channels, df_stores)
-
-        if not df_channel_agg.empty:
+        # v0.4.0: df_channels agora contem dados agrupados por cidade
+        if not df_channels.empty:
             st.dataframe(
-                df_channel_agg.style.format({
-                    "indice_medio": lambda x: f"{x*100:.2f}%",
+                df_channels.style.format({
+                    "indice_medio": lambda x: f"{x*100:.2f}%" if pd.notna(x) else "-",
                     "variacao_ultimo_dia": lambda x: f"{x:+.2f}%" if pd.notna(x) else "-",
                 }),
                 use_container_width=True,
@@ -975,16 +963,16 @@ def render_comparativo_canal(df_stores: pd.DataFrame, df_channels: pd.DataFrame)
 
             colors_channel = [
                 Colors.SUCCESS if val >= META_ID else Colors.DANGER
-                for val in df_channel_agg["indice_medio"]
+                for val in df_channels["indice_medio"]
             ]
 
             fig = go.Figure()
             fig.add_trace(
                 go.Bar(
-                    x=df_channel_agg["canal"],
-                    y=df_channel_agg["indice_medio"],
+                    x=df_channels.index,
+                    y=df_channels["indice_medio"],
                     marker_color=colors_channel,
-                    text=df_channel_agg["indice_medio"].apply(lambda x: f"{x*100:.2f}%"),
+                    text=df_channels["indice_medio"].apply(lambda x: f"{x*100:.2f}%"),
                     textposition="auto",
                 )
             )
@@ -997,20 +985,19 @@ def render_comparativo_canal(df_stores: pd.DataFrame, df_channels: pd.DataFrame)
                 annotation_font_color=Colors.WARNING,
             )
 
-            # CORRECAO: Duas chamadas separadas
             fig.update_layout(_get_base_layout())
             fig.update_layout(
-                title=f"Indice Medio por Canal/Regiao (Meta: {META_ID*100:.0f}%)",
-                xaxis_title="Canal",
+                title=f"Indice Medio por Cidade (Meta: {META_ID*100:.0f}%)",
+                xaxis_title="Cidade",
                 yaxis_title="Indice de Atingimento",
                 height=LAYOUT_CONFIG["CHART_HEIGHT_SMALL"],
             )
 
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Nenhum dado de canal disponivel.")
+            st.info("Nenhum dado de cidade disponivel.")
     except Exception as e:
-        st.error(f"Erro em Comparativo por Canal: {e}")
+        st.error(f"Erro em Comparativo por Cidade: {e}")
         logger.error(traceback.format_exc())
 
 
@@ -1034,7 +1021,6 @@ def render_distribuicao(df_stores: pd.DataFrame):
                 )
             )
 
-            # CORRECAO: Duas chamadas separadas
             fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title=f"Distribuicao dos Indices Diarios (Meta: {META_ID*100:.0f}%)",
@@ -1046,7 +1032,6 @@ def render_distribuicao(df_stores: pd.DataFrame):
             st.plotly_chart(fig, use_container_width=True)
 
             valores = df_stores.values.flatten()
-            # Filtra valores nao numericos e NaN de forma segura
             valores_filtrados = []
             for val in valores:
                 try:
@@ -1082,12 +1067,12 @@ def render_distribuicao(df_stores: pd.DataFrame):
 
 
 # ============================================================================
-# MAIN (com protecao total)
+# MAIN
 # ============================================================================
 
 
 def main():
-    """Funcao principal da aplicacao com protecao total contra erros."""
+    """Funcao principal da aplicacao."""
     try:
         logger.info("Iniciando DashID...")
         navigation = render_sidebar()
@@ -1098,7 +1083,6 @@ def main():
             error_msg = st.session_state.get("load_error", None)
 
             if error_msg:
-                # Converte Path para string de forma segura
                 local_path_str = str(LOCAL_CONFIG.get('FILE_PATH', 'N/A'))
 
                 st.markdown(
@@ -1115,7 +1099,7 @@ def main():
                         </div>
                         <div style="background: {Colors.CARD_BG}; padding: 15px; border-radius: 8px; 
                                     margin: 20px auto; max-width: 700px; text-align: left;">
-                            <p style="color: {Colors.PRIMARY};"><strong>📍 Caminho esperado do arquivo local:</strong></p>
+                            <p style="color: {Colors.PRIMARY};"><strong> Caminho esperado do arquivo local:</strong></p>
                             <code style="color: {Colors.TEXT_PRIMARY}; font-size: 0.85rem;">{local_path_str}</code>
                         </div>
                         <p style="color: {Colors.PRIMARY}; font-size: 1rem; margin-top: 20px; font-weight: 600;">
@@ -1130,7 +1114,7 @@ def main():
                     unsafe_allow_html=True,
                 )
             else:
-                st.info(" Carregando dados... Aguarde.")
+                st.info("👈 Carregando dados... Aguarde.")
             return
 
         data = st.session_state["data"]
@@ -1151,7 +1135,7 @@ def main():
             render_dia_da_semana(df_stores, selected_stores)
         elif navigation == "🏆 Ranking de Lojas":
             render_ranking(df_stores)
-        elif navigation == " Medias Moveis e Tendencia":
+        elif navigation == "📉 Medias Moveis e Tendencia":
             render_medias_moveis_tendencia(df_stores, selected_stores)
         elif navigation == "⚠️ Alertas e Consistencia":
             render_alertas_consistencia(df_stores)
@@ -1165,7 +1149,7 @@ def main():
     except Exception as e:
         logger.critical(f"ERRO CRITICO NO MAIN: {e}")
         logger.critical(traceback.format_exc())
-        st.error(f"❌ Erro critico no dashboard: {e}")
+        st.error(f" Erro critico no dashboard: {e}")
         st.code(traceback.format_exc(), language="text")
 
 
