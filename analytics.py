@@ -17,8 +17,13 @@ Responsável por todos os cálculos de negócio, indicadores e análises:
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
+CORRECOES APLICADAS (v0.3.3):
+- calculate_kpi_cards(): Filtragem segura de NaN usando pd.notna()
+- calculate_distribution(): Filtragem segura de valores nao numericos
+- calculate_moving_averages(): Removido parametro axis (incompativel Pandas 2.1+)
+
 Autor: Alex Paulo
-Versão: 0.3.2
+Versao: 0.3.3
 """
 
 import io
@@ -440,6 +445,9 @@ def calculate_moving_averages(
 ) -> Dict[int, pd.DataFrame]:
     """Calcula médias móveis para suavizar ruído diário.
 
+    CORRECAO (v0.3.3): Pandas 2.1+ nao aceita axis como argumento nomeado.
+    Usamos .T.rolling().T para aplicar rolling nas colunas.
+
     Args:
         df: DataFrame com lojas nas linhas e datas nas colunas.
         windows: Lista de tamanhos de janela (padrão: [3, 7]).
@@ -458,8 +466,8 @@ def calculate_moving_averages(
 
     result = {}
     for window in windows:
-        # rolling(axis=1) calcula média móvel ao longo das colunas (datas)
-        df_ma = df.rolling(window=window, axis=1, min_periods=1).mean()
+        # CORRECAO: Pandas 2.1+ - usar transposicao em vez de axis
+        df_ma = df.T.rolling(window=window, min_periods=1).mean().T
         result[window] = df_ma
 
     return result
