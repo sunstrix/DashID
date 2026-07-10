@@ -17,10 +17,12 @@ Responsável por todos os cálculos de negócio, indicadores e análises:
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
-CORRECOES APLICADAS (v0.4.0):
+CORRECOES APLICADAS (v0.4.1):
 - BUG 1: Adicionada funcao _ensure_datetime_columns() para filtrar APENAS colunas de datas
 - BUG 2: Conversao explicita para float64 antes de calculos matematicos
 - BUG 4: Mantido map() em vez de applymap() (Pandas 2.1+)
+- MELHORIA: Logging detalhado para diagnosticar DataFrames vazios
+- MELHORIA: Tratamento melhorado para colunas de datas
 
 CORRECOES ANTERIORES (v0.3.3):
 - calculate_kpi_cards(): Filtragem segura de NaN usando pd.notna()
@@ -28,7 +30,7 @@ CORRECOES ANTERIORES (v0.3.3):
 - calculate_moving_averages(): Removido parametro axis (incompativel Pandas 2.1+)
 
 Autor: Alex Paulo
-Versao: 0.4.0
+Versao: 0.4.1
 """
 
 import io
@@ -69,6 +71,7 @@ def _ensure_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
     - Filtra colunas que sao datetime/Timestamp (remove colunas de texto)
     - Converte valores para float64 (evita dtype object)
     - Retorna DataFrame limpo pronto para analise
+    - Logging detalhado para diagnostico
     
     Args:
         df: DataFrame que pode conter colunas de texto e datas misturadas
@@ -77,22 +80,48 @@ def _ensure_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame com APENAS colunas de datas e valores float64
     """
     if df.empty:
+        logger.warning("DataFrame vazio recebido em _ensure_datetime_columns")
         return df
+    
+    # Log das colunas originais
+    logger.debug(f"Colunas originais ({len(df.columns)}): {list(df.columns)}")
+    logger.debug(f"Tipos das colunas: {df.dtypes.to_dict()}")
     
     # Filtra APENAS colunas que sao datetime/Timestamp
     datetime_cols = [col for col in df.columns if isinstance(col, (pd.Timestamp, datetime))]
     
+    logger.debug(f"Colunas datetime encontradas: {len(datetime_cols)}")
+    
     if not datetime_cols:
-        logger.warning("Nenhuma coluna de data encontrada no DataFrame")
+        logger.warning(f"Nenhuma coluna de data encontrada! Colunas disponiveis: {list(df.columns)}")
+        # Tenta converter colunas que parecem datas
+        possible_date_cols = []
+        for col in df.columns:
+            try:
+                if isinstance(col, str):
+                    # Tenta parsear como data
+                    parsed = pd.to_datetime(col, errors='coerce')
+                    if pd.notna(parsed):
+                        possible_date_cols.append(col)
+            except:
+                pass
+        
+        if possible_date_cols:
+            logger.info(f"Colunas que parecem datas: {possible_date_cols}")
+            datetime_cols = possible_date_cols
+    
+    if not datetime_cols:
+        logger.error("Nenhuma coluna de data encontrada apos tentativa de conversao")
         return pd.DataFrame()
     
     # Seleciona apenas colunas de data
     df_filtered = df[datetime_cols].copy()
     
     # CORRECAO BUG 2: Converte explicitamente para float64
+    logger.debug(f"Convertendo {len(datetime_cols)} colunas para float64...")
     df_filtered = df_filtered.astype('float64')
     
-    logger.debug(f"Filtradas {len(datetime_cols)} colunas de data, dtype: {df_filtered.dtypes.iloc[0]}")
+    logger.info(f"Filtradas {len(datetime_cols)} colunas de data, shape: {df_filtered.shape}, dtype: {df_filtered.dtypes.iloc[0]}")
     
     return df_filtered
 
@@ -123,6 +152,7 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
         Dicionário com os KPIs calculados.
     """
     if df_stores.empty:
+        logger.warning("DataFrame de lojas vazio em calculate_kpi_cards")
         return {
             "media_geral": 0.0,
             "melhor_loja": {"nome": "-", "valor": 0.0},
@@ -133,10 +163,13 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
             "ultimo_dia": None,
         }
 
+    logger.debug(f"calculate_kpi_cards: shape={df_stores.shape}, columns={list(df_stores.columns)}")
+    
     # CORRECAO v0.4.0: Filtrar APENAS colunas de datas e converter para float64
     df_clean = _ensure_datetime_columns(df_stores)
     
     if df_clean.empty:
+        logger.error("DataFrame limpo vazio apos _ensure_datetime_columns em calculate_kpi_cards")
         return {
             "media_geral": 0.0,
             "melhor_loja": {"nome": "-", "valor": 0.0},
@@ -147,9 +180,12 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
             "ultimo_dia": None,
         }
 
+    logger.debug(f"df_clean shape: {df_clean.shape}, columns: {list(df_clean.columns)}")
+
     # Última data com dados disponíveis
     last_date = get_last_available_date(df_clean)
     if last_date is None:
+        logger.warning("Nenhuma data com dados disponiveis em calculate_kpi_cards")
         return {
             "media_geral": 0.0,
             "melhor_loja": {"nome": "-", "valor": 0.0},
@@ -189,6 +225,8 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
     valores_ultimo_dia = df_clean[last_date].dropna()
     acima_meta = int((valores_ultimo_dia >= META_ID).sum())
     abaixo_meta = int((valores_ultimo_dia < META_ID).sum())
+
+    logger.info(f"KPIs calculados: media_geral={media_geral:.2%}, acima_meta={acima_meta}, abaixo_meta={abaixo_meta}")
 
     return {
         "media_geral": media_geral,
@@ -235,12 +273,14 @@ def calculate_daily_variation(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame com variações percentuais (mesmo formato do input).
     """
     if df.empty or len(df.columns) < 2:
+        logger.warning(f"DataFrame vazio ou com poucas colunas em calculate_daily_variation: shape={df.shape if hasattr(df, 'shape') else 'N/A'}")
         return pd.DataFrame()
 
     # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
     df_clean = _ensure_datetime_columns(df)
     
     if df_clean.empty or len(df_clean.columns) < 2:
+        logger.warning(f"DataFrame limpo vazio ou com poucas colunas em calculate_daily_variation: shape={df_clean.shape if hasattr(df_clean, 'shape') else 'N/A'}")
         return pd.DataFrame()
 
     # pct_change(axis=1) calcula variação ao longo das colunas (datas)
@@ -338,12 +378,14 @@ def analyze_by_weekday(df: pd.DataFrame) -> pd.DataFrame:
             - E por loja (se aplicável)
     """
     if df.empty:
+        logger.warning("DataFrame vazio em analyze_by_weekday")
         return pd.DataFrame()
 
     # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
     df_clean = _ensure_datetime_columns(df)
     
     if df_clean.empty:
+        logger.error("DataFrame limpo vazio em analyze_by_weekday")
         return pd.DataFrame()
 
     # Mapeia cada data para o dia da semana (0=segunda, 6=domingo)
@@ -393,12 +435,14 @@ def analyze_weekday_by_store(df: pd.DataFrame) -> pd.DataFrame:
             - Colunas: dias da semana (Segunda a Domingo) com valores médios
     """
     if df.empty:
+        logger.warning("DataFrame vazio em analyze_weekday_by_store")
         return pd.DataFrame()
 
     # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
     df_clean = _ensure_datetime_columns(df)
     
     if df_clean.empty:
+        logger.error("DataFrame limpo vazio em analyze_weekday_by_store")
         return pd.DataFrame()
 
     weekdays = df_clean.columns.dayofweek
@@ -481,12 +525,14 @@ def calculate_store_ranking(
             - loja, indice_medio, variacao_semanal, posicao
     """
     if df_stores.empty:
+        logger.warning("DataFrame de lojas vazio em calculate_store_ranking")
         return pd.DataFrame()
 
     # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
     df_clean = _ensure_datetime_columns(df_stores)
     
     if df_clean.empty:
+        logger.error("DataFrame limpo vazio em calculate_store_ranking")
         return pd.DataFrame()
 
     if period == "last_week":
@@ -566,12 +612,14 @@ def calculate_moving_averages(
         ]
 
     if df.empty:
+        logger.warning("DataFrame vazio em calculate_moving_averages")
         return {w: pd.DataFrame() for w in windows}
 
     # CORRECAO v0.4.0: Filtrar APENAS colunas de datas e converter para float64
     df_clean = _ensure_datetime_columns(df)
     
     if df_clean.empty:
+        logger.error("DataFrame limpo vazio em calculate_moving_averages")
         return {w: pd.DataFrame() for w in windows}
 
     result = {}
@@ -604,12 +652,14 @@ def calculate_volatility(df: pd.DataFrame) -> pd.DataFrame:
             - loja, desvio_padrao, classificacao (consistente/moderado/instavel)
     """
     if df.empty:
+        logger.warning("DataFrame vazio em calculate_volatility")
         return pd.DataFrame()
 
     # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
     df_clean = _ensure_datetime_columns(df)
     
     if df_clean.empty:
+        logger.error("DataFrame limpo vazio em calculate_volatility")
         return pd.DataFrame()
 
     std_por_loja = df_clean.std(axis=1)
@@ -656,12 +706,14 @@ def calculate_trend(df: pd.DataFrame) -> pd.DataFrame:
             - loja, inclinacao, classificacao_tendencia
     """
     if df.empty:
+        logger.warning("DataFrame vazio em calculate_trend")
         return pd.DataFrame()
 
     # CORRECAO v0.4.0: Filtrar APENAS colunas de datas e converter para float64
     df_clean = _ensure_datetime_columns(df)
     
     if df_clean.empty:
+        logger.error("DataFrame limpo vazio em calculate_trend")
         return pd.DataFrame()
 
     min_points = BUSINESS_CONFIG["TREND_REGRESSION_MIN_POINTS"]
@@ -828,6 +880,7 @@ def aggregate_by_channel(
             - canal, indice_medio, num_lojas, variacao_ultimo_dia
     """
     if df_channels.empty and df_stores.empty:
+        logger.warning("Ambos DataFrames vazios em aggregate_by_channel")
         return pd.DataFrame()
 
     results = []
@@ -888,12 +941,14 @@ def calculate_distribution(
             - faixa, frequencia, frequencia_acumulada
     """
     if df.empty:
+        logger.warning("DataFrame vazio em calculate_distribution")
         return pd.DataFrame()
 
     # CORRECAO v0.4.0: Filtrar APENAS colunas de datas
     df_clean = _ensure_datetime_columns(df)
     
     if df_clean.empty:
+        logger.error("DataFrame limpo vazio em calculate_distribution")
         return pd.DataFrame()
 
     # Achata todos os valores não-NaN
@@ -908,6 +963,7 @@ def calculate_distribution(
             pass
     
     if len(valores_filtrados) == 0:
+        logger.warning("Nenhum valor valido encontrado em calculate_distribution")
         return pd.DataFrame()
 
     # Calcula histograma
