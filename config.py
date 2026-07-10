@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 DashID - Modulo de Configuracoes Globais
 =========================================
@@ -7,12 +8,12 @@ de negocio utilizados em todo o dashboard.
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
-ESTRATEGIA DE FONTE DE DADOS (v0.3.0):
+ESTRATEGIA DE FONTE DE DADOS (v0.3.2):
 1. Leitura LOCAL (prioritaria) - arquivo sincronizado pelo OneDrive/SharePoint
 2. SharePoint via HTTP (fallback) - apenas se arquivo local nao existir
 
 Autor: Alex Paulo
-Versao: 0.3.0
+Versao: 0.3.2
 """
 
 from pathlib import Path
@@ -21,7 +22,7 @@ from pathlib import Path
 # INFORMACOES DO PROJETO
 # ============================================================================
 PROJECT_NAME = "DashID"
-PROJECT_VERSION = "0.3.0"
+PROJECT_VERSION = "0.3.2"
 PROJECT_DESCRIPTION = (
     "Dashboard de analise de performance diaria de lojas da "
     "NSF Cosmeticos e Presentes (Cp Fani)"
@@ -156,11 +157,18 @@ CHANNEL_LABELS = {
 # O arquivo local e mantido atualizado automaticamente pelo OneDrive
 # sempre que alguem edita no SharePoint.
 #
-# CAMINHO DO ARQUIVO:
-#   %USERPROFILE%\NSF cosméticos e presentes LTDA\
-#   NSF Cosméticos e Presentes LTDA - Documentos\
-#   Departamento Pessoal\EMILY - Multi Lojas\
-#   relatório ID Relatório de projeção.xlsx
+# CAMINHO REAL DO ARQUIVO (verificado via tree):
+#   %USERPROFILE%\
+#     NSF cosméticos e presentes LTDA\
+#       NSF Cosméticos e Presentes LTDA - Documentos\
+#         Departamento Pessoal\
+#           EMILY - Multi Lojas\
+#             relatório ID\                    <- PASTA (nao parte do nome!)
+#               Relatório de projeção.xlsx     <- ARQUIVO
+#
+# IMPORTANTE: Este arquivo deve ser salvo com encoding UTF-8
+# (linha "# -*- coding: utf-8 -*-" no topo) para que os acentos
+# (é, ã, ó, ç) sejam interpretados corretamente.
 #
 # ============================================================================
 
@@ -174,13 +182,15 @@ LOCAL_CONFIG = {
 
     # Caminho completo do arquivo Excel
     # Construido de forma cross-platform usando pathlib
+    # IMPORTANTE: "relatório ID" e uma PASTA, "Relatório de projeção.xlsx" e o arquivo
     "FILE_PATH": (
         _USER_HOME
         / "NSF cosméticos e presentes LTDA"
         / "NSF Cosméticos e Presentes LTDA - Documentos"
         / "Departamento Pessoal"
         / "EMILY - Multi Lojas"
-        / "relatório ID Relatório de projeção.xlsx"
+        / "relatório ID"
+        / "Relatório de projeção.xlsx"
     ),
 
     # Nome da aba da planilha a ser lida
