@@ -5,26 +5,34 @@ DashID - Módulo de Carregamento e Validação de Dados
 Responsável por:
 - Receber o upload da planilha Excel (.xlsx) via Streamlit
 - Validar o arquivo (extensão, tamanho, estrutura)
-- Fazer parsing da planilha bruta
-- Estruturar os dados em DataFrames prontos para análise
-- Identificar lojas individuais vs. linhas de totalização por canal
+- Fazer parsing da planilha bruta com estrutura real:
+  * Coluna A: Código da Loja (float/int, NaN para totalizações)
+  * Coluna B: Nome da Loja (str)
+  * Coluna C: Cidade (str)
+  * Colunas D+: Datas como datetime objects (dinâmico)
+  * Valores: strings com "%" (ex: "116.22%") -> converter para float (1.1622)
+- Separar lojas individuais de linhas de totalização por canal
+- Adaptar-se dinamicamente ao número de colunas de datas
 
-Estrutura esperada da planilha:
-- Coluna A: nome da loja/PDV (ex.: "Coop Joaquim Nabuco", "Shopping Metrópole")
-- Colunas B em diante: datas sequenciais (01/07/2026 a 31/07/2026)
-- Valores: índice de atingimento de meta (ex.: 1.1622 = 116.22% da meta)
-- Linhas em branco separam grupos de lojas por canal/região
-- Linhas de totalização: "CANAL LOJA SBC", "CANAL LOJA SP", "CANAL LOJA CP FANI"
+Estrutura real da planilha (verificada):
+- Linha 1 (cabeçalho): Código da Loja | (vazio) | Cidade | datas...
+- Linhas 2-10: Lojas SBC (9 lojas)
+- Linha 11: SOMA LOJA SBC (totalização)
+- Linhas 12-17: Lojas SP (6 lojas)
+- Linha 18: Total LOJA SP (totalização)
+- Linha 19: Linha em branco
+- Linha 20: TOTAL CANAL LOJA CP FANI (totalização geral)
 
 Autor: Alex Paulo
-Versão: 0.1.0
+Versão: 0.2.0
 """
 
 import io
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict
 
 import pandas as pd
+import numpy as np
 import streamlit as st
 
 from config import (
@@ -32,6 +40,7 @@ from config import (
     CHANNEL_PREFIXES,
     FILE_CONFIG,
     LOG_CONFIG,
+    META_ID,
 )
 
 # Configuração de logging
@@ -83,6 +92,85 @@ def validate_file(uploaded_file) -> Tuple[bool, str]:
 
 
 # ============================================================================
+# CONVERSÃO DE VALORES (STRING COM "%" -> FLOAT)
+# ============================================================================
+
+
+def convert_percentage_string(value) -> Optional[float]:
+    """Converte string com "%" para float (índice).
+
+    Exemplos:
+        "116.22%" -> 1.1622
+        "125%" -> 1.25
+        "" ou NaN -> None
+
+    Args:
+        value: Valor a converter (string, float, ou NaN).
+
+    Returns:
+        Float representando o índice (ex: 1.1622) ou None se inválido.
+    """
+    if pd.isna(value):
+        return None
+
+    # Se já é numérico (float/int), retorna como está
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    # Se é string
+    if isinstance(value, str):
+        value = value.strip()
+        if value == "" or value == "-":
+            return None
+
+        # Remove "%" e converte
+        if "%" in value:
+            value = value.replace("%", "").strip()
+
+        try:
+            # Converte para float e divide por 100
+            return float(value) / 100.0
+        except (ValueError, TypeError):
+            return None
+
+    return None
+
+
+# ============================================================================
+# DETECÇÃO DE COLUNAS DE DATA
+# ============================================================================
+
+
+def detect_date_columns(df: pd.DataFrame) -> List[pd.Timestamp]:
+    """Detecta colunas que contêm datas (datetime objects ou strings parseáveis).
+
+    Args:
+        df: DataFrame com cabeçalho na linha 0.
+
+    Returns:
+        Lista de timestamps das colunas de data detectadas.
+    """
+    date_columns = []
+
+    for col in df.columns:
+        # Se já é datetime
+        if isinstance(col, pd.Timestamp):
+            date_columns.append(col)
+        elif isinstance(col, (pd.Timestamp, np.datetime64)):
+            date_columns.append(pd.Timestamp(col))
+        else:
+            # Tenta converter para datetime
+            try:
+                parsed_date = pd.to_datetime(col, errors="coerce")
+                if pd.notna(parsed_date):
+                    date_columns.append(parsed_date)
+            except:
+                pass
+
+    return date_columns
+
+
+# ============================================================================
 # PARSING DA PLANILHA
 # ============================================================================
 
@@ -90,10 +178,7 @@ def validate_file(uploaded_file) -> Tuple[bool, str]:
 def parse_worksheet(file_content: bytes) -> pd.DataFrame:
     """Faz parsing da planilha Excel bruta.
 
-    Lê a planilha assumindo que:
-    - Linha 1 (índice 0): cabeçalho com datas
-    - Coluna 0 (A): nomes das lojas
-    - Colunas 1+ (B em diante): valores diários
+    Lê a planilha com header=0 (primeira linha é cabeçalho).
 
     Args:
         file_content: Conteúdo binário do arquivo Excel.
@@ -105,11 +190,11 @@ def parse_worksheet(file_content: bytes) -> pd.DataFrame:
         ValueError: Se a planilha não puder ser lida ou estiver vazia.
     """
     try:
-        # Lê a planilha sem cabeçalho (header=None) para ter controle total
+        # Lê a planilha com header=0 (primeira linha é cabeçalho)
         df_raw = pd.read_excel(
             io.BytesIO(file_content),
             sheet_name=FILE_CONFIG["SHEET_NAME"],
-            header=None,
+            header=0,
             engine="openpyxl",
         )
 
@@ -124,69 +209,73 @@ def parse_worksheet(file_content: bytes) -> pd.DataFrame:
         raise ValueError(f"Não foi possível ler a planilha: {e}")
 
 
-def identify_stores_and_channels(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, list]:
+def identify_stores_and_channels(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, List[str], List[str]]:
     """Identifica e separa lojas individuais de linhas de totalização.
 
-    Analisa a coluna 0 (A) para identificar:
-    - Lojas individuais (nomes de PDV)
-    - Linhas de totalização por canal (CANAL LOJA SBC, SP, CP FANI)
-    - Linhas em branco (separadores)
+    Analisa a coluna "Código da Loja" para identificar:
+    - Lojas individuais: código != NaN
+    - Linhas de totalização: código = NaN e nome contém "SOMA", "Total", "TOTAL"
+    - Linhas em branco: todas as colunas principais são NaN
 
     Args:
         df_raw: DataFrame bruto da planilha.
 
     Returns:
-        Tupla (df_stores, df_channels, store_names):
+        Tupla (df_stores, df_channels, store_names, channel_names):
             - df_stores: DataFrame apenas com lojas individuais
             - df_channels: DataFrame com linhas de totalização por canal
             - store_names: Lista de nomes das lojas individuais
+            - channel_names: Lista de nomes dos canais
     """
-    # Coluna 0 contém os nomes das lojas/canais
-    col_names = df_raw.iloc[:, 0]
+    # Renomeia colunas para facilitar o trabalho
+    # Coluna B (índice 1) pode estar vazia no header, então renomeamos
+    col_names = df_raw.columns.tolist()
+    if len(col_names) >= 2:
+        # Renomeia coluna B para "Loja" se estiver vazia ou for "Unnamed: 1"
+        if col_names[1] == "" or str(col_names[1]).startswith("Unnamed"):
+            df_raw = df_raw.rename(columns={col_names[1]: "Loja"})
+
+    # Identifica coluna de código da loja
+    codigo_col = "Código da Loja" if "Código da Loja" in df_raw.columns else df_raw.columns[0]
+    loja_col = "Loja" if "Loja" in df_raw.columns else df_raw.columns[1]
+    cidade_col = "Cidade" if "Cidade" in df_raw.columns else df_raw.columns[2]
 
     # Identifica linhas de totalização por canal
-    channel_rows = []
-    for prefix_key, prefix_value in CHANNEL_PREFIXES.items():
-        mask = col_names.astype(str).str.contains(prefix_value, case=False, na=False)
-        if mask.any():
-            channel_rows.append(mask)
+    is_channel = pd.Series([False] * len(df_raw))
+    channel_keywords = ["SOMA", "Total", "TOTAL"]
 
-    # Cria máscara para linhas de totalização
-    if channel_rows:
-        is_channel = channel_rows[0]
-        for mask in channel_rows[1:]:
-            is_channel = is_channel | mask
-    else:
-        is_channel = pd.Series([False] * len(df_raw))
+    for keyword in channel_keywords:
+        mask = df_raw[loja_col].astype(str).str.contains(keyword, case=False, na=False)
+        is_channel = is_channel | mask
 
-    # Identifica linhas em branco (separadores)
-    is_blank = col_names.isna() | (col_names.astype(str).str.strip() == "")
+    # Identifica linhas em branco (todas as colunas principais são NaN)
+    is_blank = (
+        df_raw[codigo_col].isna() &
+        df_raw[loja_col].isna() &
+        df_raw[cidade_col].isna()
+    )
 
-    # Identifica cabeçalho (primeira linha com datas)
-    is_header = pd.Series([False] * len(df_raw))
-    if len(df_raw) > 0:
-        # Assume que a primeira linha é o cabeçalho
-        is_header.iloc[0] = True
-
-    # Lojas individuais: não é cabeçalho, não é canal, não é em branco
-    is_store = ~is_header & ~is_channel & ~is_blank
+    # Lojas individuais: não é canal, não é em branco, código != NaN
+    is_store = ~is_channel & ~is_blank & df_raw[codigo_col].notna()
 
     # Extrai DataFrames
     df_stores = df_raw[is_store].copy()
     df_channels = df_raw[is_channel].copy()
 
-    # Extrai nomes das lojas
-    store_names = df_stores.iloc[:, 0].astype(str).str.strip().tolist()
+    # Extrai nomes das lojas (remove espaços em branco)
+    store_names = df_stores[loja_col].astype(str).str.strip().tolist()
+    channel_names = df_channels[loja_col].astype(str).str.strip().tolist()
 
-    logger.info(f"Identificadas {len(store_names)} lojas individuais e {len(df_channels)} canais")
+    logger.info(f"Identificadas {len(store_names)} lojas individuais e {len(channel_names)} canais")
 
-    return df_stores, df_channels, store_names
+    return df_stores, df_channels, store_names, channel_names
 
 
 def clean_and_structure_data(
     df_stores: pd.DataFrame,
     df_channels: pd.DataFrame,
-    store_names: list
+    store_names: List[str],
+    channel_names: List[str]
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Index]:
     """Limpa e estrutura os dados em formato analisável.
 
@@ -199,6 +288,7 @@ def clean_and_structure_data(
         df_stores: DataFrame com lojas individuais.
         df_channels: DataFrame com totalizações por canal.
         store_names: Lista de nomes das lojas.
+        channel_names: Lista de nomes dos canais.
 
     Returns:
         Tupla (df_stores_structured, df_channels_structured, dates):
@@ -206,53 +296,65 @@ def clean_and_structure_data(
             - df_channels_structured: DataFrame estruturado dos canais
             - dates: Índice de datas (colunas)
     """
-    # Extrai datas do cabeçalho (primeira linha, colunas 1+)
-    if len(df_stores) > 0:
-        # Assume que a primeira linha do df_raw original era o cabeçalho
-        # Como df_stores não inclui o cabeçalho, precisamos pegar do df_raw original
-        # Vamos assumir que as datas estão na primeira linha do arquivo
-        pass
+    # Identifica colunas de data
+    codigo_col = "Código da Loja" if "Código da Loja" in df_stores.columns else df_stores.columns[0]
+    loja_col = "Loja" if "Loja" in df_stores.columns else df_stores.columns[1]
+    cidade_col = "Cidade" if "Cidade" in df_stores.columns else df_stores.columns[2]
 
-    # Para df_stores: índice = nomes das lojas, colunas = datas
-    if len(df_stores) > 0:
-        # Coluna 0 = nomes das lojas (já extraídos)
-        # Colunas 1+ = valores diários
-        df_stores_values = df_stores.iloc[:, 1:].copy()
+    # Colunas de data são todas exceto as 3 primeiras (código, loja, cidade)
+    date_columns_raw = df_stores.columns[3:]
 
-        # Converte para numérico (força NaN para valores inválidos)
-        df_stores_values = df_stores_values.apply(pd.to_numeric, errors="coerce")
+    # Converte colunas de data para Timestamp
+    dates = []
+    for col in date_columns_raw:
+        try:
+            if isinstance(col, pd.Timestamp):
+                dates.append(col)
+            else:
+                parsed = pd.to_datetime(col, errors="coerce")
+                if pd.notna(parsed):
+                    dates.append(parsed)
+                else:
+                    dates.append(pd.NaT)
+        except:
+            dates.append(pd.NaT)
+
+    # Cria índice de datas (remove NaT)
+    dates_index = pd.Index([d for d in dates if pd.notna(d)])
+
+    # Para df_stores: extrai valores e converte de string com "%" para float
+    if len(df_stores) > 0:
+        df_stores_values = df_stores.iloc[:, 3:].copy()
+
+        # Aplica conversão de valores
+        df_stores_values = df_stores_values.applymap(convert_percentage_string)
 
         # Define índice como nomes das lojas
         df_stores_structured = df_stores_values.copy()
         df_stores_structured.index = store_names
 
-        # Extrai datas (assumindo que a primeira linha do arquivo original tinha as datas)
-        # Como não temos acesso direto ao df_raw aqui, vamos gerar datas sequenciais
-        # baseado no número de colunas
-        num_days = df_stores_values.shape[1]
-        dates = pd.date_range(start="2026-07-01", periods=num_days, freq="D")
-        df_stores_structured.columns = dates
+        # Define colunas como datas
+        if len(dates_index) == df_stores_values.shape[1]:
+            df_stores_structured.columns = dates_index
     else:
         df_stores_structured = pd.DataFrame()
-        dates = pd.Index([])
 
-    # Para df_channels: índice = nomes dos canais, colunas = datas
+    # Para df_channels: mesma lógica
     if len(df_channels) > 0:
-        channel_names = df_channels.iloc[:, 0].astype(str).str.strip().tolist()
-        df_channels_values = df_channels.iloc[:, 1:].copy()
-        df_channels_values = df_channels_values.apply(pd.to_numeric, errors="coerce")
+        df_channels_values = df_channels.iloc[:, 3:].copy()
+        df_channels_values = df_channels_values.applymap(convert_percentage_string)
 
         df_channels_structured = df_channels_values.copy()
         df_channels_structured.index = channel_names
 
-        if len(dates) > 0 and len(dates) == df_channels_values.shape[1]:
-            df_channels_structured.columns = dates
+        if len(dates_index) == df_channels_values.shape[1]:
+            df_channels_structured.columns = dates_index
     else:
         df_channels_structured = pd.DataFrame()
 
-    logger.info(f"Dados estruturados: {len(df_stores_structured)} lojas, {len(df_channels_structured)} canais")
+    logger.info(f"Dados estruturados: {len(df_stores_structured)} lojas, {len(df_channels_structured)} canais, {len(dates_index)} datas")
 
-    return df_stores_structured, df_channels_structured, dates
+    return df_stores_structured, df_channels_structured, dates_index
 
 
 # ============================================================================
@@ -298,15 +400,12 @@ def load_data_from_upload(uploaded_file) -> dict:
     df_raw = parse_worksheet(file_content)
 
     # Identifica lojas e canais
-    df_stores, df_channels, store_names = identify_stores_and_channels(df_raw)
+    df_stores, df_channels, store_names, channel_names = identify_stores_and_channels(df_raw)
 
     # Estrutura os dados
     df_stores_structured, df_channels_structured, dates = clean_and_structure_data(
-        df_stores, df_channels, store_names
+        df_stores, df_channels, store_names, channel_names
     )
-
-    # Extrai nomes dos canais
-    channel_names = df_channels_structured.index.tolist() if len(df_channels_structured) > 0 else []
 
     # Metadados do arquivo
     metadata = {
@@ -416,4 +515,4 @@ if __name__ == "__main__":
     # Teste básico (apenas para desenvolvimento)
     print("Módulo data_loader.py carregado com sucesso.")
     print(f"Configurações de arquivo: {FILE_CONFIG}")
-    print(f"Prefixos de canal: {CHANNEL_PREFIXES}")
+    print(f"Meta do ID: {META_ID}")
