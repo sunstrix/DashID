@@ -2,11 +2,14 @@
 DashID - Aplicação Principal Streamlit
 =======================================
 
-Dashboard de análise de performance diária de lojas da NSF Cosméticos e Presentes (Cp Fani).
+Dashboard de análise de performance diária de lojas da NSF Cosméticos
+e Presentes (Cp Fani).
+
+META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
 Estrutura:
 - Sidebar: upload de arquivo, navegação, filtros
-- Visão Geral: KPIs de topo (cards)
+- Visão Geral: KPIs de topo (cards) com meta 115%
 - Análise Horizontal: variação diária, gráfico de linhas, top movers
 - Análise por Dia da Semana: agrupamento, heatmap, melhor/pior dia
 - Ranking de Lojas: tabela ordenável com variação semanal
@@ -16,7 +19,7 @@ Estrutura:
 - Distribuição: histograma dos índices
 
 Autor: Alex Paulo
-Versão: 0.1.0
+Versão: 0.2.0
 """
 
 import streamlit as st
@@ -31,10 +34,12 @@ from config import (
     Colors,
     CUSTOM_CSS,
     LAYOUT_CONFIG,
+    META_ID,
     PLOTLY_LAYOUT_TEMPLATE,
     PROJECT_DESCRIPTION,
     PROJECT_NAME,
     PROJECT_VERSION,
+    format_meta_info,
 )
 from data_loader import load_data_from_upload
 from sharepoint_connector import check_sharepoint_status, load_data_from_sharepoint
@@ -87,7 +92,11 @@ def render_sidebar():
                 <p style="color: {Colors.TEXT_SECONDARY}; margin-top: 8px;">
                     {PROJECT_DESCRIPTION}
                 </p>
-                <p style="color: {Colors.TEXT_MUTED}; font-size: 0.8rem; margin-top: 4px;">
+                <p style="color: {Colors.PRIMARY}; font-size: 0.85rem; margin-top: 4px;
+                   font-weight: 600;">
+                    🎯 Meta do ID: {META_ID*100:.0f}%
+                </p>
+                <p style="color: {Colors.TEXT_MUTED}; font-size: 0.75rem; margin-top: 2px;">
                     Versão {PROJECT_VERSION}
                 </p>
             </div>
@@ -110,7 +119,10 @@ def render_sidebar():
             uploaded_file = st.file_uploader(
                 "Envie a planilha de projeção (.xlsx)",
                 type=["xlsx", "xlsm"],
-                help="Arquivo Excel com índice de atingimento de meta por loja e por dia.",
+                help=(
+                    "Arquivo Excel com índice de atingimento de meta por loja "
+                    "e por dia. Meta do ID: 115%."
+                ),
             )
 
         with source_tab2:
@@ -159,15 +171,29 @@ def render_sidebar():
         if "data" in st.session_state:
             metadata = st.session_state["data"]["metadata"]
             st.markdown("### ℹ️ Dados Carregados")
+
+            date_start = "-"
+            date_end = "-"
+            if metadata["date_range"][0] is not None:
+                try:
+                    date_start = metadata["date_range"][0].strftime("%d/%m/%Y")
+                except:
+                    date_start = str(metadata["date_range"][0])
+            if metadata["date_range"][1] is not None:
+                try:
+                    date_end = metadata["date_range"][1].strftime("%d/%m/%Y")
+                except:
+                    date_end = str(metadata["date_range"][1])
+
             st.markdown(
                 f"""
                 - **Arquivo:** {metadata['filename']}
                 - **Tamanho:** {metadata['file_size_mb']:.2f} MB
                 - **Lojas:** {metadata['num_stores']}
                 - **Canais:** {metadata['num_channels']}
-                - **Dias:** {metadata['num_days']}
-                - **Período:** {metadata['date_range'][0].strftime('%d/%m/%Y') if metadata['date_range'][0] else '-'} 
-                  a {metadata['date_range'][1].strftime('%d/%m/%Y') if metadata['date_range'][1] else '-'}
+                - **Dias com dados:** {metadata['num_days']}
+                - **Período:** {date_start} a {date_end}
+                - **🎯 Meta:** {META_ID*100:.0f}%
                 """
             )
 
@@ -192,13 +218,6 @@ def render_sidebar():
 # ============================================================================
 
 
-def create_plotly_figure(fig_type="line", **kwargs):
-    """Cria figura Plotly com template unificado."""
-    fig = go.Figure()
-    fig.update_layout(**PLOTLY_LAYOUT_TEMPLATE["layout"])
-    return fig
-
-
 def format_percentage(value: float, decimals: int = 2) -> str:
     """Formata valor como percentual."""
     if pd.isna(value):
@@ -214,6 +233,11 @@ def format_variation(value: float, decimals: int = 2) -> str:
     return f"{signal}{value*100:.{decimals}f}%"
 
 
+def meta_label() -> str:
+    """Retorna label da meta formatada."""
+    return f"Meta ({META_ID*100:.0f}%)"
+
+
 # ============================================================================
 # SEÇÕES DO DASHBOARD
 # ============================================================================
@@ -222,6 +246,7 @@ def format_variation(value: float, decimals: int = 2) -> str:
 def render_visao_geral(df_stores: pd.DataFrame):
     """Renderiza a seção de Visão Geral com KPIs de topo."""
     st.header("📊 Visão Geral")
+    st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% (consulta de CPF do cliente)")
 
     # Calcula KPIs
     kpis = calculate_kpi_cards(df_stores)
@@ -230,40 +255,45 @@ def render_visao_geral(df_stores: pd.DataFrame):
     col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
+        media_geral_pct = format_percentage(kpis["media_geral"])
+        delta_text = "✅ Acima da meta" if kpis["media_geral"] >= META_ID else "⚠️ Abaixo da meta"
         st.metric(
             label="Índice Médio MTD",
-            value=format_percentage(kpis["media_geral"]),
-            delta="Acima da meta" if kpis["media_geral"] >= 1.0 else "Abaixo da meta",
-            delta_color="normal" if kpis["media_geral"] >= 1.0 else "inverse",
+            value=media_geral_pct,
+            delta=delta_text,
+            delta_color="normal" if kpis["media_geral"] >= META_ID else "inverse",
         )
 
     with col2:
         st.metric(
             label="Melhor Loja",
-            value=kpis["melhor_loja"]["nome"],
+            value=kpis["melhor_loja"]["nome"][:20],
             delta=format_percentage(kpis["melhor_loja"]["valor"]),
         )
 
     with col3:
+        pior_acima_meta = kpis["pior_loja"]["valor"] >= META_ID
         st.metric(
             label="Pior Loja",
-            value=kpis["pior_loja"]["nome"],
+            value=kpis["pior_loja"]["nome"][:20],
             delta=format_percentage(kpis["pior_loja"]["valor"]),
-            delta_color="inverse",
+            delta_color="normal" if pior_acima_meta else "inverse",
         )
 
     with col4:
+        pct_acima = (kpis["acima_meta"] / kpis["total_lojas"] * 100) if kpis["total_lojas"] > 0 else 0
         st.metric(
-            label="Acima da Meta",
+            label=f"Acima da Meta (≥{META_ID*100:.0f}%)",
             value=f"{kpis['acima_meta']} lojas",
-            delta=f"{(kpis['acima_meta']/kpis['total_lojas']*100):.1f}%" if kpis['total_lojas'] > 0 else "0%",
+            delta=f"{pct_acima:.1f}%",
         )
 
     with col5:
+        pct_abaixo = (kpis["abaixo_meta"] / kpis["total_lojas"] * 100) if kpis["total_lojas"] > 0 else 0
         st.metric(
-            label="Abaixo da Meta",
+            label=f"Abaixo da Meta (<{META_ID*100:.0f}%)",
             value=f"{kpis['abaixo_meta']} lojas",
-            delta=f"{(kpis['abaixo_meta']/kpis['total_lojas']*100):.1f}%" if kpis['total_lojas'] > 0 else "0%",
+            delta=f"{pct_abaixo:.1f}%",
             delta_color="inverse",
         )
 
@@ -285,17 +315,18 @@ def render_visao_geral(df_stores: pd.DataFrame):
         )
     )
 
-    # Linha de meta (1.0)
+    # Linha de meta (1.15)
     fig.add_hline(
-        y=1.0,
+        y=META_ID,
         line_dash="dash",
         line_color=Colors.WARNING,
-        annotation_text="Meta (100%)",
+        annotation_text=meta_label(),
         annotation_position="top right",
+        annotation_font_color=Colors.WARNING,
     )
 
     fig.update_layout(
-        title="Índice Médio de Atingimento de Meta - Evolução Diária",
+        title=f"Índice Médio de Atingimento - Evolução Diária (Meta: {META_ID*100:.0f}%)",
         xaxis_title="Data",
         yaxis_title="Índice de Atingimento",
         height=LAYOUT_CONFIG["CHART_HEIGHT"],
@@ -304,10 +335,36 @@ def render_visao_geral(df_stores: pd.DataFrame):
 
     st.plotly_chart(fig, use_container_width=True)
 
+    # Tabela resumo por loja (último dia disponível)
+    st.subheader("📋 Performance por Loja (Último Dia)")
+    last_date = None
+    has_data = df_stores.notna().any()
+    dates_with_data = has_data[has_data].index
+    if len(dates_with_data) > 0:
+        last_date = dates_with_data.max()
+
+    if last_date is not None:
+        ultimo_dia_df = pd.DataFrame({
+            "Loja": df_stores.index,
+            f"Índice ({last_date.strftime('%d/%m') if hasattr(last_date, 'strftime') else last_date})": df_stores[last_date].values,
+            "Status": df_stores[last_date].apply(
+                lambda x: "✅ Acima" if pd.notna(x) and x >= META_ID else ("⚠️ Abaixo" if pd.notna(x) else "❌ Sem dado")
+            ),
+        })
+
+        st.dataframe(
+            ultimo_dia_df.style.format({
+                f"Índice ({last_date.strftime('%d/%m') if hasattr(last_date, 'strftime') else last_date})": lambda x: f"{x*100:.2f}%" if pd.notna(x) else "-",
+            }),
+            use_container_width=True,
+            height=500,
+        )
+
 
 def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
     """Renderiza a seção de Análise Horizontal."""
     st.header("📈 Análise Horizontal (Dia a Dia)")
+    st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Variação = (dia atual / dia anterior) - 1")
 
     # Calcula variação diária
     df_variation = calculate_daily_variation(df_stores)
@@ -316,50 +373,63 @@ def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
     top_movers = get_top_movers(df_variation, top_n=5)
 
     if top_movers["data"]:
-        st.subheader(f"🏆 Maiores Altas e Quedas - {top_movers['data'].strftime('%d/%m/%Y')}")
+        data_str = top_movers["data"].strftime("%d/%m/%Y") if hasattr(top_movers["data"], "strftime") else str(top_movers["data"])
+        st.subheader(f"🏆 Maiores Altas e Quedas - {data_str}")
 
         col1, col2 = st.columns(2)
 
         with col1:
             st.markdown("**🟢 Maiores Altas**")
-            for loja, var in top_movers["maiores_altas"]:
-                st.markdown(f"- **{loja}**: {format_variation(var)}")
+            if top_movers["maiores_altas"]:
+                for loja, var in top_movers["maiores_altas"]:
+                    st.markdown(f"- **{loja}**: {format_variation(var)}")
+            else:
+                st.info("Nenhuma variação positiva no último dia.")
 
         with col2:
             st.markdown("**🔴 Maiores Quedas**")
-            for loja, var in top_movers["maiores_quedas"]:
-                st.markdown(f"- **{loja}**: {format_variation(var)}")
+            if top_movers["maiores_quedas"]:
+                for loja, var in top_movers["maiores_quedas"]:
+                    st.markdown(f"- **{loja}**: {format_variation(var)}")
+            else:
+                st.info("Nenhuma variação negativa no último dia.")
 
     st.markdown("---")
 
     # Gráfico de linhas comparando lojas selecionadas
     st.subheader("📊 Evolução Comparativa por Loja")
 
-    df_filtered = df_stores.loc[selected_stores]
+    stores_to_plot = [s for s in selected_stores if s in df_stores.index]
+    if not stores_to_plot:
+        stores_to_plot = df_stores.index.tolist()
+
+    df_filtered = df_stores.loc[stores_to_plot]
 
     fig = go.Figure()
-    for i, loja in enumerate(selected_stores):
+    for i, loja in enumerate(stores_to_plot):
+        color = Colors.PLOTLY_PALETTE[i % len(Colors.PLOTLY_PALETTE)]
         fig.add_trace(
             go.Scatter(
                 x=df_filtered.columns,
                 y=df_filtered.loc[loja].values,
                 mode="lines+markers",
                 name=loja,
-                line=dict(color=Colors.PLOTLY_PALETTE[i % len(Colors.PLOTLY_PALETTE)], width=2),
+                line=dict(color=color, width=2),
                 marker=dict(size=6),
             )
         )
 
-    # Linha de meta
+    # Linha de meta (1.15)
     fig.add_hline(
-        y=1.0,
+        y=META_ID,
         line_dash="dash",
         line_color=Colors.WARNING,
-        annotation_text="Meta (100%)",
+        annotation_text=meta_label(),
+        annotation_font_color=Colors.WARNING,
     )
 
     fig.update_layout(
-        title="Evolução Diária do Índice por Loja",
+        title=f"Evolução Diária do Índice por Loja (Meta: {META_ID*100:.0f}%)",
         xaxis_title="Data",
         yaxis_title="Índice de Atingimento",
         height=LAYOUT_CONFIG["CHART_HEIGHT"],
@@ -371,35 +441,73 @@ def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
 
     st.markdown("---")
 
-    # Tabela de variação diária
-    st.subheader("📋 Tabela de Variação Diária")
+    # Tabela de valores absolutos
+    st.subheader("📋 Tabela de Valores por Loja e Dia")
 
-    df_variation_filtered = df_variation.loc[selected_stores]
-    df_table = prepare_variation_table(df_variation_filtered)
+    df_table_abs = df_filtered.copy()
+    for col in df_table_abs.columns:
+        df_table_abs[col] = df_table_abs[col].apply(
+            lambda x: f"{x*100:.2f}%" if pd.notna(x) else "-"
+        )
 
-    # Exibe tabela
     st.dataframe(
-        df_table,
+        df_table_abs,
         use_container_width=True,
         height=400,
     )
 
-    # Botão de exportação
-    col1, col2 = st.columns(2)
-    with col1:
-        csv_data = export_to_csv(df_variation_filtered)
+    # Exportação tabela de valores
+    col_exp1, col_exp2 = st.columns(2)
+    with col_exp1:
+        csv_data = export_to_csv(df_filtered)
         st.download_button(
-            label="📥 Exportar CSV",
+            label="📥 Exportar Valores (CSV)",
             data=csv_data,
+            file_name="dashid_valores_diarios.csv",
+            mime="text/csv",
+        )
+
+    with col_exp2:
+        excel_data = export_to_excel(df_filtered)
+        st.download_button(
+            label="📥 Exportar Valores (Excel)",
+            data=excel_data,
+            file_name="dashid_valores_diarios.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    st.markdown("---")
+
+    # Tabela de variação diária
+    st.subheader("📋 Tabela de Variação Diária")
+
+    df_variation_filtered = df_variation.loc[
+        [s for s in stores_to_plot if s in df_variation.index]
+    ]
+    df_table_var = prepare_variation_table(df_variation_filtered)
+
+    st.dataframe(
+        df_table_var,
+        use_container_width=True,
+        height=400,
+    )
+
+    # Botão de exportação variação
+    col_exp3, col_exp4 = st.columns(2)
+    with col_exp3:
+        csv_data_var = export_to_csv(df_variation_filtered)
+        st.download_button(
+            label="📥 Exportar Variação (CSV)",
+            data=csv_data_var,
             file_name="dashid_variacao_diaria.csv",
             mime="text/csv",
         )
 
-    with col2:
-        excel_data = export_to_excel(df_variation_filtered)
+    with col_exp4:
+        excel_data_var = export_to_excel(df_variation_filtered)
         st.download_button(
-            label="📥 Exportar Excel",
-            data=excel_data,
+            label="📥 Exportar Variação (Excel)",
+            data=excel_data_var,
             file_name="dashid_variacao_diaria.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
@@ -408,6 +516,7 @@ def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
 def render_dia_da_semana(df_stores: pd.DataFrame, selected_stores: list):
     """Renderiza a seção de Análise por Dia da Semana."""
     st.header("📅 Análise por Dia da Semana")
+    st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Agrupamento por dia da semana")
 
     # Análise consolidada
     st.subheader("📊 Desempenho Médio por Dia da Semana (Consolidado)")
@@ -422,18 +531,21 @@ def render_dia_da_semana(df_stores: pd.DataFrame, selected_stores: list):
                 y=df_weekday["media"],
                 name="Média",
                 marker_color=Colors.PRIMARY,
+                text=df_weekday["media"].apply(lambda x: f"{x*100:.1f}%"),
+                textposition="auto",
             )
         )
 
         fig.add_hline(
-            y=1.0,
+            y=META_ID,
             line_dash="dash",
             line_color=Colors.WARNING,
-            annotation_text="Meta (100%)",
+            annotation_text=meta_label(),
+            annotation_font_color=Colors.WARNING,
         )
 
         fig.update_layout(
-            title="Índice Médio por Dia da Semana",
+            title=f"Índice Médio por Dia da Semana (Meta: {META_ID*100:.0f}%)",
             xaxis_title="Dia da Semana",
             yaxis_title="Índice de Atingimento",
             height=LAYOUT_CONFIG["CHART_HEIGHT_SMALL"],
@@ -452,11 +564,25 @@ def render_dia_da_semana(df_stores: pd.DataFrame, selected_stores: list):
             use_container_width=True,
         )
 
+        # Melhor e pior dia consolidado
+        if not df_weekday["media"].isna().all():
+            melhor_dia = df_weekday["media"].idxmax()
+            pior_dia = df_weekday["media"].idxmin()
+            col_info1, col_info2 = st.columns(2)
+            with col_info1:
+                st.success(f"🏆 Melhor dia: **{melhor_dia}** ({df_weekday.loc[melhor_dia, 'media']*100:.2f}%)")
+            with col_info2:
+                st.error(f"⚠️ Pior dia: **{pior_dia}** ({df_weekday.loc[pior_dia, 'media']*100:.2f}%)")
+
     st.markdown("---")
 
     # Heatmap por loja e dia da semana
     st.subheader("🔥 Heatmap: Desempenho por Loja e Dia da Semana")
-    df_weekday_store = analyze_weekday_by_store(df_stores.loc[selected_stores])
+    stores_for_heatmap = [s for s in selected_stores if s in df_stores.index]
+    if not stores_for_heatmap:
+        stores_for_heatmap = df_stores.index.tolist()
+
+    df_weekday_store = analyze_weekday_by_store(df_stores.loc[stores_for_heatmap])
 
     if not df_weekday_store.empty:
         fig = px.imshow(
@@ -474,7 +600,7 @@ def render_dia_da_semana(df_stores: pd.DataFrame, selected_stores: list):
 
         fig.update_layout(
             title="Heatmap de Desempenho por Loja e Dia da Semana",
-            height=max(400, len(selected_stores) * 30),
+            height=max(400, len(stores_for_heatmap) * 30),
             **PLOTLY_LAYOUT_TEMPLATE["layout"],
         )
 
@@ -498,49 +624,57 @@ def render_dia_da_semana(df_stores: pd.DataFrame, selected_stores: list):
 def render_ranking(df_stores: pd.DataFrame):
     """Renderiza a seção de Ranking de Lojas."""
     st.header("🏆 Ranking de Lojas")
+    st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Ordenado pelo índice médio acumulado")
 
     # Ranking do mês
     st.subheader("📊 Ranking por Índice Médio Acumulado (Mês)")
     df_ranking = calculate_store_ranking(df_stores, period="month")
 
     if not df_ranking.empty:
+        # Adiciona coluna de status em relação à meta
+        df_ranking_display = df_ranking.copy()
+        df_ranking_display["status_meta"] = df_ranking_display["indice_medio"].apply(
+            lambda x: "✅ Acima" if x >= META_ID else "⚠️ Abaixo"
+        )
+
         # Tabela formatada
         st.dataframe(
-            df_ranking.style.format({
+            df_ranking_display.style.format({
                 "indice_medio": lambda x: f"{x*100:.2f}%",
                 "variacao_semanal": lambda x: f"{x:+.2f}%" if pd.notna(x) else "-",
-            }).background_gradient(
-                subset=["indice_medio"],
-                cmap="RdYlGn",
-                vmin=0.8,
-                vmax=1.2,
-            ),
+            }),
             use_container_width=True,
             height=500,
         )
 
         # Gráfico de barras do ranking
+        colors = [
+            Colors.SUCCESS if val >= META_ID else Colors.DANGER
+            for val in df_ranking["indice_medio"]
+        ]
+
         fig = go.Figure()
         fig.add_trace(
             go.Bar(
                 x=df_ranking["indice_medio"],
                 y=df_ranking["loja"],
                 orientation="h",
-                marker_color=Colors.PRIMARY,
+                marker_color=colors,
                 text=df_ranking["indice_medio"].apply(lambda x: f"{x*100:.2f}%"),
                 textposition="auto",
             )
         )
 
         fig.add_vline(
-            x=1.0,
+            x=META_ID,
             line_dash="dash",
             line_color=Colors.WARNING,
-            annotation_text="Meta",
+            annotation_text=meta_label(),
+            annotation_font_color=Colors.WARNING,
         )
 
         fig.update_layout(
-            title="Ranking de Lojas por Índice Médio",
+            title=f"Ranking de Lojas por Índice Médio (Meta: {META_ID*100:.0f}%)",
             xaxis_title="Índice de Atingimento",
             yaxis=dict(autorange="reversed"),
             height=max(400, len(df_ranking) * 30),
@@ -550,28 +684,44 @@ def render_ranking(df_stores: pd.DataFrame):
         st.plotly_chart(fig, use_container_width=True)
 
     # Exportação
-    csv_data = export_to_csv(df_ranking)
-    st.download_button(
-        label="📥 Exportar Ranking (CSV)",
-        data=csv_data,
-        file_name="dashid_ranking_lojas.csv",
-        mime="text/csv",
-    )
+    col_exp1, col_exp2 = st.columns(2)
+    with col_exp1:
+        csv_data = export_to_csv(df_ranking)
+        st.download_button(
+            label="📥 Exportar Ranking (CSV)",
+            data=csv_data,
+            file_name="dashid_ranking_lojas.csv",
+            mime="text/csv",
+        )
+
+    with col_exp2:
+        excel_data = export_to_excel(df_ranking)
+        st.download_button(
+            label="📥 Exportar Ranking (Excel)",
+            data=excel_data,
+            file_name="dashid_ranking_lojas.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 
 def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: list):
     """Renderiza a seção de Médias Móveis e Tendência."""
     st.header("📉 Médias Móveis e Tendência")
+    st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Suavização e regressão linear")
 
     # Médias móveis
     st.subheader("📊 Médias Móveis (3 e 7 dias)")
-    mas = calculate_moving_averages(df_stores.loc[selected_stores])
+    stores_for_ma = [s for s in selected_stores if s in df_stores.index]
+    if not stores_for_ma:
+        stores_for_ma = df_stores.index.tolist()[:1]
+
+    mas = calculate_moving_averages(df_stores.loc[stores_for_ma])
 
     if mas:
         # Gráfico comparativo para loja selecionada
         loja_selecionada = st.selectbox(
             "Selecione uma loja para visualizar:",
-            options=selected_stores,
+            options=stores_for_ma,
             index=0,
         )
 
@@ -589,7 +739,7 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
         )
 
         # MMA 3 dias
-        if 3 in mas:
+        if 3 in mas and loja_selecionada in mas[3].index:
             fig.add_trace(
                 go.Scatter(
                     x=mas[3].columns,
@@ -601,7 +751,7 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
             )
 
         # MMA 7 dias
-        if 7 in mas:
+        if 7 in mas and loja_selecionada in mas[7].index:
             fig.add_trace(
                 go.Scatter(
                     x=mas[7].columns,
@@ -612,10 +762,16 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
                 )
             )
 
-        fig.add_hline(y=1.0, line_dash="dash", line_color=Colors.WARNING)
+        fig.add_hline(
+            y=META_ID,
+            line_dash="dash",
+            line_color=Colors.WARNING,
+            annotation_text=meta_label(),
+            annotation_font_color=Colors.WARNING,
+        )
 
         fig.update_layout(
-            title=f"Médias Móveis - {loja_selecionada}",
+            title=f"Médias Móveis - {loja_selecionada} (Meta: {META_ID*100:.0f}%)",
             xaxis_title="Data",
             yaxis_title="Índice de Atingimento",
             height=LAYOUT_CONFIG["CHART_HEIGHT"],
@@ -631,6 +787,12 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
     df_trend = calculate_trend(df_stores)
 
     if not df_trend.empty:
+        # Adiciona coluna de status em relação à meta
+        media_atual = df_stores.mean(axis=1)
+        df_trend["status_meta"] = media_atual.apply(
+            lambda x: "✅ Acima" if x >= META_ID else "⚠️ Abaixo"
+        )
+
         # Tabela de tendências
         st.dataframe(
             df_trend.style.format({
@@ -643,12 +805,21 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
         # Gráfico de distribuição de tendências
         trend_counts = df_trend["classificacao_tendencia"].value_counts()
 
+        color_map = {
+            "Alta": Colors.SUCCESS,
+            "Estável": Colors.NEUTRAL,
+            "Queda": Colors.DANGER,
+            "Dados insuficientes": Colors.TEXT_MUTED,
+            "Erro": Colors.WARNING,
+        }
+        pie_colors = [color_map.get(label, Colors.NEUTRAL) for label in trend_counts.index]
+
         fig = go.Figure()
         fig.add_trace(
             go.Pie(
                 labels=trend_counts.index,
                 values=trend_counts.values,
-                marker=dict(colors=[Colors.SUCCESS, Colors.NEUTRAL, Colors.DANGER]),
+                marker=dict(colors=pie_colors),
                 textinfo="label+percent",
             )
         )
@@ -665,6 +836,7 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
 def render_alertas_consistencia(df_stores: pd.DataFrame):
     """Renderiza a seção de Alertas e Consistência."""
     st.header("⚠️ Alertas e Consistência")
+    st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Monitoramento de quedas e volatilidade")
 
     # Alertas de queda consecutiva
     st.subheader("🔴 Alertas de Queda Consecutiva")
@@ -675,12 +847,44 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
         st.warning(f"⚠️ {len(df_alerts)} loja(s) com 3 ou mais dias consecutivos de queda:")
         st.dataframe(
             df_alerts.style.format({
-                "ultima_data": lambda x: x.strftime("%d/%m/%Y") if pd.notna(x) else "-",
+                "ultima_data": lambda x: x.strftime("%d/%m/%Y") if hasattr(x, "strftime") and pd.notna(x) else str(x),
             }),
             use_container_width=True,
         )
     else:
-        st.success("✅ Nenhuma loja com quedas consecutivas críticas")
+        st.success("✅ Nenhuma loja com quedas consecutivas críticas (3+ dias)")
+
+    st.markdown("---")
+
+    # Lojas abaixo da meta no último dia
+    st.subheader(f"🚨 Lojas Abaixo da Meta (<{META_ID*100:.0f}%) no Último Dia")
+    has_data = df_stores.notna().any()
+    dates_with_data = has_data[has_data].index
+    if len(dates_with_data) > 0:
+        last_date = dates_with_data.max()
+        ultimo_dia = df_stores[last_date].dropna()
+        abaixo_meta = ultimo_dia[ultimo_dia < META_ID]
+
+        if len(abaixo_meta) > 0:
+            df_abaixo = pd.DataFrame({
+                "Loja": abaixo_meta.index,
+                "Índice": abaixo_meta.values,
+                "Distância da Meta": abaixo_meta.apply(lambda x: META_ID - x),
+            })
+            df_abaixo = df_abaixo.sort_values("Índice", ascending=True)
+
+            st.error(f"🔴 {len(abaixo_meta)} loja(s) abaixo da meta no último dia:")
+            st.dataframe(
+                df_abaixo.style.format({
+                    "Índice": lambda x: f"{x*100:.2f}%",
+                    "Distância da Meta": lambda x: f"-{x*100:.2f}%",
+                }),
+                use_container_width=True,
+            )
+        else:
+            st.success(f"✅ Todas as lojas estão acima da meta de {META_ID*100:.0f}% no último dia!")
+    else:
+        st.info("Sem dados disponíveis para análise.")
 
     st.markdown("---")
 
@@ -698,13 +902,20 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
         )
 
         # Gráfico de barras da volatilidade
+        color_map_vol = {
+            "Consistente": Colors.SUCCESS,
+            "Moderado": Colors.WARNING,
+            "Instável": Colors.DANGER,
+        }
+        bar_colors = [color_map_vol.get(c, Colors.NEUTRAL) for c in df_volatility["classificacao"]]
+
         fig = go.Figure()
         fig.add_trace(
             go.Bar(
                 x=df_volatility["desvio_padrao"],
                 y=df_volatility["loja"],
                 orientation="h",
-                marker_color=Colors.SECONDARY,
+                marker_color=bar_colors,
                 text=df_volatility["classificacao"],
                 textposition="auto",
             )
@@ -724,6 +935,7 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
 def render_comparativo_canal(df_stores: pd.DataFrame, df_channels: pd.DataFrame):
     """Renderiza a seção de Comparativo por Canal."""
     st.header("🏢 Comparativo por Canal/Região")
+    st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Agregação por canal")
 
     df_channel_agg = aggregate_by_channel(df_channels, df_stores)
 
@@ -738,21 +950,32 @@ def render_comparativo_canal(df_stores: pd.DataFrame, df_channels: pd.DataFrame)
         )
 
         # Gráfico de barras comparativo
+        colors_channel = [
+            Colors.SUCCESS if val >= META_ID else Colors.DANGER
+            for val in df_channel_agg["indice_medio"]
+        ]
+
         fig = go.Figure()
         fig.add_trace(
             go.Bar(
                 x=df_channel_agg["canal"],
                 y=df_channel_agg["indice_medio"],
-                marker_color=Colors.PRIMARY,
+                marker_color=colors_channel,
                 text=df_channel_agg["indice_medio"].apply(lambda x: f"{x*100:.2f}%"),
                 textposition="auto",
             )
         )
 
-        fig.add_hline(y=1.0, line_dash="dash", line_color=Colors.WARNING)
+        fig.add_hline(
+            y=META_ID,
+            line_dash="dash",
+            line_color=Colors.WARNING,
+            annotation_text=meta_label(),
+            annotation_font_color=Colors.WARNING,
+        )
 
         fig.update_layout(
-            title="Índice Médio por Canal/Região",
+            title=f"Índice Médio por Canal/Região (Meta: {META_ID*100:.0f}%)",
             xaxis_title="Canal",
             yaxis_title="Índice de Atingimento",
             height=LAYOUT_CONFIG["CHART_HEIGHT_SMALL"],
@@ -767,6 +990,7 @@ def render_comparativo_canal(df_stores: pd.DataFrame, df_channels: pd.DataFrame)
 def render_distribuicao(df_stores: pd.DataFrame):
     """Renderiza a seção de Distribuição."""
     st.header("📊 Distribuição dos Índices")
+    st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Concentração de performance")
 
     df_dist = calculate_distribution(df_stores, bins=20)
 
@@ -783,8 +1007,10 @@ def render_distribuicao(df_stores: pd.DataFrame):
             )
         )
 
+        # Linha vertical na meta (1.15)
+        # Encontramos a faixa mais próxima da meta para anotar
         fig.update_layout(
-            title="Distribuição dos Índices Diários",
+            title=f"Distribuição dos Índices Diários (Meta: {META_ID*100:.0f}%)",
             xaxis_title="Faixa de Índice",
             yaxis_title="Frequência",
             height=LAYOUT_CONFIG["CHART_HEIGHT"],
@@ -792,6 +1018,25 @@ def render_distribuicao(df_stores: pd.DataFrame):
         )
 
         st.plotly_chart(fig, use_container_width=True)
+
+        # Estatísticas resumidas
+        valores = df_stores.values.flatten()
+        valores = valores[~np.isnan(valores)]
+
+        if len(valores) > 0:
+            acima_meta_count = (valores >= META_ID).sum()
+            abaixo_meta_count = (valores < META_ID).sum()
+            total = len(valores)
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total de Registros", f"{total}")
+            with col2:
+                st.metric("Média Geral", f"{np.mean(valores)*100:.2f}%")
+            with col3:
+                st.metric(f"Acima da Meta (≥{META_ID*100:.0f}%)", f"{acima_meta_count} ({acima_meta_count/total*100:.1f}%)")
+            with col4:
+                st.metric(f"Abaixo da Meta (<{META_ID*100:.0f}%)", f"{abaixo_meta_count} ({abaixo_meta_count/total*100:.1f}%)")
 
         # Tabela de distribuição
         st.dataframe(
@@ -825,9 +1070,22 @@ def main():
     # Verifica se há dados carregados
     if "data" not in st.session_state:
         st.title(f"📊 {PROJECT_NAME}")
-        st.info(
-            "👈 Envie uma planilha Excel (.xlsx) na barra lateral para começar a análise, "
-            "ou configure o SharePoint para carregamento automático."
+        st.markdown(
+            f"""
+            <div style="text-align: center; padding: 40px 20px;">
+                <h2 style="color: {Colors.PRIMARY};">Bem-vindo ao DashID</h2>
+                <p style="color: {Colors.TEXT_SECONDARY}; font-size: 1.1rem;">
+                    Dashboard de análise de performance diária do <strong>Índice de Identificação (ID)</strong>
+                </p>
+                <p style="color: {Colors.PRIMARY}; font-size: 1.3rem; font-weight: 600;">
+                    🎯 Meta do ID: {META_ID*100:.0f}% (consulta de CPF do cliente)
+                </p>
+                <p style="color: {Colors.TEXT_MUTED}; margin-top: 20px;">
+                    👈 Envie uma planilha Excel (.xlsx) na barra lateral para começar a análise.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
         return
 
@@ -836,6 +1094,11 @@ def main():
     df_stores = data["stores"]
     df_channels = data["channels"]
     selected_stores = st.session_state.get("selected_stores", data["store_names"])
+
+    # Verifica se há dados válidos
+    if df_stores.empty:
+        st.warning("⚠️ Nenhum dado de loja encontrado na planilha. Verifique a estrutura do arquivo.")
+        return
 
     # Renderiza seção selecionada
     if navigation == "📊 Visão Geral":
