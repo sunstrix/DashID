@@ -148,3 +148,6 @@ test_*.py
 NOTES.md
 TODO.md
 *.notes
+instalar_log.txt
+executar_log.txt
+testar.py
