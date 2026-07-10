@@ -1,42 +1,38 @@
 """
-DashID - Conector Opcional para Microsoft SharePoint (Graph API)
-=================================================================
+DashID - Conector SharePoint (FONTE PRINCIPAL + FALLBACK GRAPH API)
+====================================================================
 
-Módulo desacoplado que permite leitura direta da planilha de projeção
-armazenada no SharePoint corporativo (Microsoft 365), usando Microsoft Graph API.
+Este modulo implementa DOIS metodos de acesso ao SharePoint:
 
-IMPORTANTE: Este módulo é OPCIONAL. O dashboard funciona perfeitamente
-sem ele, usando apenas o upload manual via Streamlit (data_loader.py).
+1. METODO PRINCIPAL (download_from_sharepoint_link):
+   - Baixa diretamente do link de compartilhamento do SharePoint
+   - Nao requer credenciais (autenticacao via cookies/sessao publica)
+   - Segue redirects automaticamente para encontrar a URL de download real
+   - Salva o arquivo localmente em cache (data/relatorio_sharepoint.xlsx)
+   - Usado como fonte principal do dashboard
 
-Para habilitar:
-1. Crie um arquivo .env na raiz do projeto (veja .env.example)
-2. Configure as credenciais do Azure AD (client_id, tenant_id, client_secret)
-3. Configure o site_id e drive_id do SharePoint
-4. Configure o path do arquivo no drive
-
-Se as credenciais não estiverem configuradas, as funções deste módulo
-retornarão None ou False, permitindo que o fluxo principal continue
-normalmente via upload manual.
-
-Requisitos (quando habilitado):
-- requests
-- python-dotenv
-- msal (Microsoft Authentication Library)
+2. METODO FALLBACK (download_file_from_sharepoint via Graph API):
+   - Usa Microsoft Graph API com Client Credentials
+   - Requer credenciais configuradas no .env (TENANT_ID, CLIENT_ID, etc.)
+   - Usado apenas se o metodo principal falhar e o usuario quiser
+     habilitar autenticacao avancada
 
 Autor: Alex Paulo
-Versão: 0.2.0
+Versao: 0.2.2
 """
 
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Optional, Tuple
+from urllib.parse import urlparse, parse_qs, urlencode
 
 import requests
 
-from config import LOG_CONFIG, META_ID
+from config import LOG_CONFIG, META_ID, SHAREPOINT_CONFIG
 
-# Configuração de logging
+# Configuracao de logging
 logging.basicConfig(
     level=LOG_CONFIG["LEVEL"],
     format=LOG_CONFIG["FORMAT"],
@@ -44,7 +40,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Tenta carregar variáveis de ambiente do arquivo .env
+# Tenta carregar variaveis de ambiente do arquivo .env
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -52,16 +48,20 @@ try:
     logger.info("python-dotenv carregado com sucesso")
 except ImportError:
     DOTENV_AVAILABLE = False
-    logger.warning("python-dotenv não instalado. Usando apenas variáveis de ambiente do sistema.")
+    logger.warning("python-dotenv nao instalado. Usando apenas variaveis de ambiente do sistema.")
 
 
 # ============================================================================
-# CONFIGURAÇÃO DO SHAREPOINT (via variáveis de ambiente)
+# CONFIGURACOES DO SHAREPOINT
 # ============================================================================
 
 
 class SharePointConfig:
-    """Configurações do SharePoint carregadas de variáveis de ambiente."""
+    """Configuracoes do SharePoint carregadas de variaveis de ambiente.
+
+    Usadas APENAS para o fallback via Microsoft Graph API.
+    O download direto do link de compartilhamento NAO usa estas credenciais.
+    """
 
     # Azure AD / Microsoft Identity Platform
     TENANT_ID: Optional[str] = os.getenv("SHAREPOINT_TENANT_ID")
@@ -71,22 +71,24 @@ class SharePointConfig:
     # SharePoint / Graph API
     SITE_ID: Optional[str] = os.getenv("SHAREPOINT_SITE_ID")
     DRIVE_ID: Optional[str] = os.getenv("SHAREPOINT_DRIVE_ID")
-    FILE_PATH: Optional[str] = os.getenv("SHAREPOINT_FILE_PATH", "Relatorio_de_projecao.xlsx")
+    FILE_PATH: Optional[str] = os.getenv(
+        "SHAREPOINT_FILE_PATH",
+        "Relatorio_de_projecao.xlsx"
+    )
 
-    # Escopos necessários para Graph API
+    # Escopos necessarios para Graph API
     SCOPES = ["https://graph.microsoft.com/.default"]
 
     # Endpoints
     GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
-    LOGIN_URL = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token" if TENANT_ID else None
+    LOGIN_URL = (
+        f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
+        if TENANT_ID else None
+    )
 
     @classmethod
     def is_configured(cls) -> bool:
-        """Verifica se todas as credenciais necessárias estão configuradas.
-
-        Returns:
-            True se todas as credenciais estão presentes, False caso contrário.
-        """
+        """Verifica se todas as credenciais necessarias estao configuradas."""
         required_vars = [
             cls.TENANT_ID,
             cls.CLIENT_ID,
@@ -94,30 +96,378 @@ class SharePointConfig:
             cls.SITE_ID,
             cls.DRIVE_ID,
         ]
-
-        is_configured = all(var is not None and var.strip() != "" for var in required_vars)
-
+        is_configured = all(
+            var is not None and var.strip() != "" for var in required_vars
+        )
         if not is_configured:
-            logger.info("Credenciais do SharePoint não configuradas. Usando upload manual.")
-
+            logger.info(
+                "Credenciais do Graph API nao configuradas. "
+                "Apenas download direto do link estara disponivel."
+            )
         return is_configured
 
 
 # ============================================================================
-# AUTENTICAÇÃO (Microsoft Authentication Library - MSAL)
+# METODO PRINCIPAL: DOWNLOAD DIRETO DO LINK DE COMPARTILHAMENTO
+# ============================================================================
+
+
+def _ensure_cache_dir() -> Path:
+    """Garante que o diretorio de cache existe.
+
+    Returns:
+        Path do diretorio de cache.
+    """
+    cache_dir = Path(SHAREPOINT_CONFIG["CACHE_DIR"])
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def _get_cache_file_path() -> Path:
+    """Retorna o caminho completo do arquivo em cache.
+
+    Returns:
+        Path do arquivo cacheado.
+    """
+    cache_dir = _ensure_cache_dir()
+    return cache_dir / SHAREPOINT_CONFIG["CACHE_FILENAME"]
+
+
+def _is_cache_valid() -> bool:
+    """Verifica se o cache e valido (arquivo existe e esta dentro do TTL).
+
+    Returns:
+        True se o cache e valido, False caso contrario.
+    """
+    cache_file = _get_cache_file_path()
+
+    if not cache_file.exists():
+        logger.info("Arquivo de cache nao encontrado.")
+        return False
+
+    file_age = time.time() - cache_file.stat().st_mtime
+    ttl = SHAREPOINT_CONFIG["CACHE_TTL"]
+
+    if file_age > ttl:
+        logger.info(
+            f"Cache expirado. Idade: {file_age:.0f}s, TTL: {ttl}s."
+        )
+        return False
+
+    logger.info(
+        f"Cache valido. Idade: {file_age:.0f}s, TTL: {ttl}s."
+    )
+    return True
+
+
+def _extract_download_url(share_url: str, timeout: int) -> Optional[str]:
+    """Extrai a URL de download real a partir do link de compartilhamento.
+
+    O SharePoint redireciona o link de compartilhamento para uma pagina
+    que contem a URL de download real (geralmente em download.aspx ou
+    similar). Este metodo segue os redirects e tenta extrair essa URL.
+
+    Args:
+        share_url: Link de compartilhamento do SharePoint.
+        timeout: Timeout em segundos.
+
+    Returns:
+        URL de download real ou None se nao conseguir extrair.
+    """
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;"
+            "q=0.9,image/webp,*/*;q=0.8"
+        ),
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+
+    try:
+        # Faz GET seguindo redirects para encontrar a URL final
+        logger.info(f"Acessando link de compartilhamento: {share_url}")
+        response = requests.get(
+            share_url,
+            headers=headers,
+            timeout=timeout,
+            allow_redirects=True,
+        )
+
+        if response.status_code != 200:
+            logger.error(
+                f"Erro ao acessar link: HTTP {response.status_code}"
+            )
+            return None
+
+        final_url = response.url
+        logger.info(f"URL final apos redirects: {final_url}")
+
+        # Tenta extrair parametros da URL que contenham a URL de download
+        parsed = urlparse(final_url)
+        query_params = parse_qs(parsed.query)
+
+        # Alguns links do SharePoint passam a URL de download em parametros
+        for param in ["sourcedoc", "file", "download", "url", "fileUrl"]:
+            if param in query_params:
+                download_url = query_params[param][0]
+                logger.info(f"URL de download extraida do parametro '{param}'")
+                return download_url
+
+        # Se nao encontrou em parametros, tenta extrair do HTML
+        # O SharePoint geralmente coloca a URL de download em um botao
+        # ou em um atributo data-url
+        html_content = response.text
+
+        # Procura por padroes comuns de URL de download
+        patterns = [
+            'downloadUrl":"([^"]+)"',
+            'fileUrl":"([^"]+)"',
+            'href="([^"]*download\.aspx[^"]*)"',
+            'href="([^"]*\.xlsx[^"]*)"',
+        ]
+
+        import re
+        for pattern in patterns:
+            match = re.search(pattern, html_content)
+            if match:
+                download_url = match.group(1)
+                # Decodifica URL se necessario
+                download_url = download_url.replace("\\u0026", "&")
+                logger.info(f"URL de download extraida do HTML: {download_url}")
+                return download_url
+
+        # Se nao encontrou URL especifica, retorna a URL final
+        # (alguns links ja sao o download direto)
+        logger.info("URL de download nao extraida, usando URL final.")
+        return final_url
+
+    except requests.exceptions.Timeout:
+        logger.error(f"Timeout ao acessar link de compartilhamento ({timeout}s)")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Erro de conexao ao acessar link: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Erro inesperado ao extrair URL de download: {e}")
+        return None
+
+
+def download_from_sharepoint_link(share_url: str) -> Tuple[Optional[bytes], Optional[str]]:
+    """Baixa o arquivo diretamente do link de compartilhamento do SharePoint.
+
+    Este e o METODO PRINCIPAL de obtencao de dados. Nao requer credenciais.
+
+    Fluxo:
+    1. Verifica se existe cache valido (TTL de 1 hora)
+    2. Se cache valido, retorna o conteudo do cache
+    3. Se cache invalido, baixa do SharePoint
+    4. Salva em cache local
+    5. Retorna o conteudo
+
+    Args:
+        share_url: Link de compartilhamento do SharePoint.
+
+    Returns:
+        Tupla (file_content, error_message):
+            - file_content: Conteudo binario do arquivo (bytes) ou None
+            - error_message: Mensagem de erro (string) ou None se sucesso
+    """
+    # Verifica cache primeiro
+    if _is_cache_valid():
+        try:
+            cache_file = _get_cache_file_path()
+            with open(cache_file, "rb") as f:
+                file_content = f.read()
+            logger.info(
+                f"Arquivo carregado do cache: {len(file_content)} bytes"
+            )
+            return file_content, None
+        except Exception as e:
+            logger.warning(f"Erro ao ler cache: {e}. Tentando download.")
+
+    # Extrai URL de download real
+    timeout = SHAREPOINT_CONFIG["TIMEOUT"]
+    download_url = _extract_download_url(share_url, timeout)
+
+    if not download_url:
+        error_msg = (
+            "Nao foi possivel extrair URL de download do link de compartilhamento. "
+            "Verifique se o link e valido e se voce tem acesso ao arquivo."
+        )
+        return None, error_msg
+
+    # Baixa o arquivo
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+    }
+
+    try:
+        logger.info(f"Baixando arquivo de: {download_url}")
+        response = requests.get(
+            download_url,
+            headers=headers,
+            timeout=timeout,
+            allow_redirects=True,
+        )
+
+        if response.status_code != 200:
+            error_msg = (
+                f"Erro ao baixar arquivo: HTTP {response.status_code}. "
+                f"Resposta: {response.text[:200]}"
+            )
+            logger.error(error_msg)
+            return None, error_msg
+
+        file_content = response.content
+
+        # Verifica se o conteudo parece ser um arquivo Excel valido
+        if len(file_content) < 100:
+            error_msg = (
+                f"Arquivo baixado muito pequeno ({len(file_content)} bytes). "
+                "Provavelmente o link retornou uma pagina HTML em vez do arquivo."
+            )
+            logger.error(error_msg)
+            return None, error_msg
+
+        # Verifica assinatura de arquivo ZIP (xlsx e um zip)
+        if not file_content.startswith(b"PK"):
+            # Pode ser que o SharePoint tenha retornado HTML
+            if b"<html" in file_content.lower()[:1000]:
+                error_msg = (
+                    "O link retornou uma pagina HTML em vez do arquivo Excel. "
+                    "Isso geralmente acontece quando o link requer autenticacao "
+                    "ou esta expirado."
+                )
+                logger.error(error_msg)
+                return None, error_msg
+
+        # Salva em cache
+        try:
+            cache_file = _get_cache_file_path()
+            with open(cache_file, "wb") as f:
+                f.write(file_content)
+            logger.info(
+                f"Arquivo salvo em cache: {cache_file} "
+                f"({len(file_content)} bytes)"
+            )
+        except Exception as e:
+            logger.warning(f"Erro ao salvar cache: {e}")
+
+        logger.info(f"Arquivo baixado com sucesso: {len(file_content)} bytes")
+        return file_content, None
+
+    except requests.exceptions.Timeout:
+        error_msg = f"Timeout ao baixar arquivo ({timeout}s)."
+        logger.error(error_msg)
+        return None, error_msg
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Erro de conexao ao baixar arquivo: {e}"
+        logger.error(error_msg)
+        return None, error_msg
+    except Exception as e:
+        error_msg = f"Erro inesperado ao baixar arquivo: {e}"
+        logger.error(error_msg)
+        return None, error_msg
+
+
+def load_data_from_sharepoint_link(share_url: str) -> Tuple[Optional[bytes], dict]:
+    """Funcao principal para carregar dados do link de compartilhamento.
+
+    Chamada pelo app.py na inicializacao para baixar automaticamente
+    a planilha do SharePoint.
+
+    Args:
+        share_url: Link de compartilhamento do SharePoint.
+
+    Returns:
+        Tupla (file_content, metadata):
+            - file_content: Conteudo binario do arquivo (bytes) ou None
+            - metadata: Dicionario com metadados (inclui 'error' se falhou)
+    """
+    from datetime import datetime
+
+    logger.info("Iniciando download do SharePoint via link de compartilhamento...")
+    logger.info(f"URL: {share_url}")
+
+    file_content, error_msg = download_from_sharepoint_link(share_url)
+
+    cache_file = _get_cache_file_path()
+    last_update = None
+    if cache_file.exists():
+        last_update = datetime.fromtimestamp(
+            cache_file.stat().st_mtime
+        ).strftime("%d/%m/%Y %H:%M:%S")
+
+    if file_content is None:
+        logger.error(f"Falha ao carregar do SharePoint: {error_msg}")
+        metadata = {
+            "source": "sharepoint",
+            "success": False,
+            "error": error_msg,
+            "last_update": last_update,
+        }
+        return None, metadata
+
+    metadata = {
+        "source": "sharepoint",
+        "success": True,
+        "filename": SHAREPOINT_CONFIG["CACHE_FILENAME"],
+        "file_size_bytes": len(file_content),
+        "file_size_mb": len(file_content) / (1024 * 1024),
+        "share_url": share_url,
+        "cache_file": str(cache_file),
+        "last_update": last_update,
+    }
+
+    logger.info(f"Dados carregados do SharePoint com sucesso: {metadata}")
+    return file_content, metadata
+
+
+def invalidate_cache() -> bool:
+    """Invalida o cache removendo o arquivo local.
+
+    Returns:
+        True se o cache foi removido, False caso contrario.
+    """
+    cache_file = _get_cache_file_path()
+    try:
+        if cache_file.exists():
+            cache_file.unlink()
+            logger.info(f"Cache invalidado: {cache_file}")
+            return True
+        logger.info("Nenhum cache para invalidar.")
+        return True
+    except Exception as e:
+        logger.error(f"Erro ao invalidar cache: {e}")
+        return False
+
+
+# ============================================================================
+# METODO FALLBACK: MICROSOFT GRAPH API (requer credenciais)
 # ============================================================================
 
 
 def get_access_token() -> Optional[str]:
-    """Obtém token de acesso para Microsoft Graph API usando Client Credentials.
+    """Obtem token de acesso para Microsoft Graph API usando Client Credentials.
 
-    Usa o fluxo "Client Credentials" (aplicação daemon, sem interação do usuário).
+    Usa o fluxo "Client Credentials" (aplicacao daemon, sem interacao do usuario).
+    Este metodo e usado APENAS como fallback avancado.
 
     Returns:
         Token de acesso (string) ou None se falhar.
     """
     if not SharePointConfig.is_configured():
-        logger.warning("SharePoint não configurado. Não é possível obter token.")
+        logger.warning(
+            "Graph API nao configurado. Credenciais ausentes no .env."
+        )
         return None
 
     try:
@@ -128,7 +478,10 @@ def get_access_token() -> Optional[str]:
             app = msal.ConfidentialClientApplication(
                 client_id=SharePointConfig.CLIENT_ID,
                 client_credential=SharePointConfig.CLIENT_SECRET,
-                authority=f"https://login.microsoftonline.com/{SharePointConfig.TENANT_ID}",
+                authority=(
+                    f"https://login.microsoftonline.com/"
+                    f"{SharePointConfig.TENANT_ID}"
+                ),
             )
 
             result = app.acquire_token_for_client(scopes=SharePointConfig.SCOPES)
@@ -137,14 +490,23 @@ def get_access_token() -> Optional[str]:
                 logger.info("Token de acesso obtido com sucesso via MSAL")
                 return result["access_token"]
             else:
-                error_msg = result.get("error_description", result.get("error", "Erro desconhecido"))
+                error_msg = result.get(
+                    "error_description",
+                    result.get("error", "Erro desconhecido")
+                )
                 logger.error(f"Erro ao obter token via MSAL: {error_msg}")
                 return None
 
         except ImportError:
-            logger.warning("MSAL não instalado. Tentando autenticação via requests direto.")
+            logger.warning(
+                "MSAL nao instalado. Tentando autenticacao via requests direto."
+            )
 
-            # Fallback: requisição direta ao endpoint de token
+            # Fallback: requisicao direta ao endpoint de token
+            if not SharePointConfig.LOGIN_URL:
+                logger.error("LOGIN_URL nao configurada (TENANT_ID ausente)")
+                return None
+
             token_data = {
                 "grant_type": "client_credentials",
                 "client_id": SharePointConfig.CLIENT_ID,
@@ -152,49 +514,58 @@ def get_access_token() -> Optional[str]:
                 "scope": "https://graph.microsoft.com/.default",
             }
 
-            response = requests.post(SharePointConfig.LOGIN_URL, data=token_data, timeout=30)
+            response = requests.post(
+                SharePointConfig.LOGIN_URL,
+                data=token_data,
+                timeout=30,
+            )
 
             if response.status_code == 200:
                 token_json = response.json()
                 logger.info("Token de acesso obtido com sucesso via requests")
                 return token_json.get("access_token")
             else:
-                logger.error(f"Erro ao obter token via requests: {response.status_code} - {response.text}")
+                logger.error(
+                    f"Erro ao obter token via requests: "
+                    f"{response.status_code} - {response.text}"
+                )
                 return None
 
     except Exception as e:
-        logger.error(f"Exceção ao obter token de acesso: {e}")
+        logger.error(f"Excecao ao obter token de acesso: {e}")
         return None
 
 
-# ============================================================================
-# DOWNLOAD DO ARQUIVO DO SHAREPOINT
-# ============================================================================
-
-
 def download_file_from_sharepoint() -> Tuple[Optional[bytes], Optional[str]]:
-    """Baixa o arquivo de projeção do SharePoint via Microsoft Graph API.
+    """Baixa o arquivo via Microsoft Graph API (METODO FALLBACK).
 
     Endpoint usado:
         GET /drives/{drive-id}/root:/{item-path}:/content
 
     Returns:
         Tupla (file_content, error_message):
-            - file_content: Conteúdo binário do arquivo (bytes) ou None
+            - file_content: Conteudo binario do arquivo (bytes) ou None
             - error_message: Mensagem de erro (string) ou None se sucesso
     """
     if not SharePointConfig.is_configured():
-        return None, "SharePoint não configurado. Configure as variáveis de ambiente."
+        return (
+            None,
+            "Graph API nao configurado. Configure as variaveis de ambiente "
+            "no .env para usar este metodo."
+        )
 
-    # Obtém token de acesso
+    # Obtem token de acesso
     access_token = get_access_token()
     if not access_token:
-        return None, "Não foi possível obter token de acesso para o SharePoint."
+        return None, "Nao foi possivel obter token de acesso para o Graph API."
 
     # Monta a URL do endpoint
     drive_id = SharePointConfig.DRIVE_ID
     file_path = SharePointConfig.FILE_PATH
-    url = f"{SharePointConfig.GRAPH_API_BASE}/drives/{drive_id}/root:/{file_path}:/content"
+    url = (
+        f"{SharePointConfig.GRAPH_API_BASE}/drives/"
+        f"{drive_id}/root:/{file_path}:/content"
+    )
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -202,7 +573,7 @@ def download_file_from_sharepoint() -> Tuple[Optional[bytes], Optional[str]]:
     }
 
     try:
-        logger.info(f"Baixando arquivo do SharePoint: {file_path}")
+        logger.info(f"Baixando arquivo via Graph API: {file_path}")
         response = requests.get(url, headers=headers, timeout=60)
 
         if response.status_code == 200:
@@ -210,17 +581,20 @@ def download_file_from_sharepoint() -> Tuple[Optional[bytes], Optional[str]]:
             logger.info(f"Arquivo baixado com sucesso: {len(file_content)} bytes")
             return file_content, None
         else:
-            error_msg = f"Erro ao baixar arquivo: HTTP {response.status_code} - {response.text}"
+            error_msg = (
+                f"Erro ao baixar arquivo: HTTP {response.status_code} - "
+                f"{response.text[:200]}"
+            )
             logger.error(error_msg)
             return None, error_msg
 
     except requests.exceptions.Timeout:
-        error_msg = "Timeout ao tentar baixar arquivo do SharePoint (60s)."
+        error_msg = "Timeout ao baixar arquivo do Graph API (60s)."
         logger.error(error_msg)
         return None, error_msg
 
     except requests.exceptions.RequestException as e:
-        error_msg = f"Erro de conexão ao baixar arquivo: {e}"
+        error_msg = f"Erro de conexao ao baixar arquivo: {e}"
         logger.error(error_msg)
         return None, error_msg
 
@@ -230,33 +604,24 @@ def download_file_from_sharepoint() -> Tuple[Optional[bytes], Optional[str]]:
         return None, error_msg
 
 
-# ============================================================================
-# FUNÇÃO PRINCIPAL (INTEGRAÇÃO COM DATA_LOADER)
-# ============================================================================
-
-
 def load_data_from_sharepoint() -> Tuple[Optional[bytes], Optional[dict]]:
-    """Função principal para carregar dados diretamente do SharePoint.
+    """Funcao de fallback para carregar dados via Microsoft Graph API.
 
-    Esta função é chamada pelo app.py quando o usuário seleciona a opção
-    de carregar dados do SharePoint (em vez de upload manual).
-
-    Returns:
+    Retorna:
         Tupla (file_content, metadata):
-            - file_content: Conteúdo binário do arquivo (bytes) ou None
-            - metadata: Dicionário com metadados ou None
+            - file_content: Conteudo binario do arquivo (bytes) ou None
+            - metadata: Dicionario com metadados ou None
     """
-    logger.info("Tentando carregar dados diretamente do SharePoint...")
+    logger.info("Tentando carregar dados via Microsoft Graph API (fallback)...")
 
     file_content, error_msg = download_file_from_sharepoint()
 
     if file_content is None:
-        logger.error(f"Falha ao carregar do SharePoint: {error_msg}")
+        logger.error(f"Falha ao carregar via Graph API: {error_msg}")
         return None, None
 
-    # Metadados do arquivo baixado
     metadata = {
-        "source": "sharepoint",
+        "source": "sharepoint_graph_api",
         "filename": SharePointConfig.FILE_PATH,
         "file_size_bytes": len(file_content),
         "file_size_mb": len(file_content) / (1024 * 1024),
@@ -264,25 +629,28 @@ def load_data_from_sharepoint() -> Tuple[Optional[bytes], Optional[dict]]:
         "drive_id": SharePointConfig.DRIVE_ID,
     }
 
-    logger.info(f"Dados carregados do SharePoint com sucesso: {metadata}")
+    logger.info(f"Dados carregados via Graph API com sucesso: {metadata}")
     return file_content, metadata
 
 
 # ============================================================================
-# VERIFICAÇÃO DE STATUS (para UI)
+# VERIFICACAO DE STATUS (para UI)
 # ============================================================================
 
 
 def check_sharepoint_status() -> dict:
-    """Verifica o status de configuração do SharePoint.
+    """Verifica o status de configuracao do SharePoint.
 
-    Útil para exibir no dashboard se o SharePoint está configurado ou não.
+    Util para exibir no dashboard se os metodos de acesso estao disponiveis.
 
     Returns:
-        Dicionário com:
-            - "configured": bool (se está configurado)
-            - "dotenv_available": bool (se python-dotenv está instalado)
-            - "missing_vars": list (variáveis faltantes, se houver)
+        Dicionario com:
+            - "direct_link_configured": bool (link de compartilhamento)
+            - "graph_api_configured": bool (credenciais do Graph API)
+            - "cache_exists": bool (arquivo em cache local)
+            - "cache_valid": bool (cache dentro do TTL)
+            - "dotenv_available": bool
+            - "missing_vars": list (variaveis faltantes do Graph API)
     """
     missing_vars = []
 
@@ -297,16 +665,24 @@ def check_sharepoint_status() -> dict:
     if not SharePointConfig.DRIVE_ID:
         missing_vars.append("SHAREPOINT_DRIVE_ID")
 
+    cache_file = _get_cache_file_path()
+
     status = {
-        "configured": len(missing_vars) == 0,
+        "configured": len(missing_vars) == 0,  # Mantido para compatibilidade
+        "direct_link_configured": bool(SHAREPOINT_CONFIG.get("SHARE_URL")),
+        "graph_api_configured": len(missing_vars) == 0,
+        "cache_exists": cache_file.exists(),
+        "cache_valid": _is_cache_valid(),
         "dotenv_available": DOTENV_AVAILABLE,
         "missing_vars": missing_vars,
+        "share_url": SHAREPOINT_CONFIG.get("SHARE_URL"),
     }
 
-    if status["configured"]:
-        logger.info("SharePoint está configurado e pronto para uso")
-    else:
-        logger.info(f"SharePoint não configurado. Variáveis faltantes: {missing_vars}")
+    logger.info(
+        f"Status SharePoint: link={status['direct_link_configured']}, "
+        f"graph_api={status['graph_api_configured']}, "
+        f"cache={status['cache_valid']}"
+    )
 
     return status
 
@@ -316,21 +692,26 @@ def check_sharepoint_status() -> dict:
 # ============================================================================
 
 if __name__ == "__main__":
-    # Teste básico (apenas para desenvolvimento)
-    print("Módulo sharepoint_connector.py carregado com sucesso.")
+    print("Modulo sharepoint_connector.py carregado com sucesso.")
     print(f"Meta do ID: {META_ID} ({META_ID*100:.0f}%)")
-    print(f"SharePoint configurado: {SharePointConfig.is_configured()}")
-    print(f"python-dotenv disponível: {DOTENV_AVAILABLE}")
+    print(f"URL de compartilhamento: {SHAREPOINT_CONFIG.get('SHARE_URL')}")
+    print(f"Graph API configurado: {SharePointConfig.is_configured()}")
+    print(f"python-dotenv disponivel: {DOTENV_AVAILABLE}")
 
     status = check_sharepoint_status()
-    print(f"Status: {status}")
+    print(f"\nStatus: {status}")
 
-    if status["configured"]:
-        print("\nTentando baixar arquivo do SharePoint...")
-        file_content, metadata = load_data_from_sharepoint()
+    print("\n" + "=" * 70)
+    print("Testando download direto do link de compartilhamento...")
+    print("=" * 70)
+
+    share_url = SHAREPOINT_CONFIG.get("SHARE_URL")
+    if share_url:
+        file_content, metadata = load_data_from_sharepoint_link(share_url)
         if file_content:
-            print(f"Arquivo baixado: {len(file_content)} bytes")
+            print(f"SUCESSO! Arquivo baixado: {len(file_content)} bytes")
+            print(f"Metadata: {metadata}")
         else:
-            print("Falha ao baixar arquivo")
+            print(f"FALHA: {metadata}")
     else:
-        print("\nSharePoint não configurado. Use upload manual via Streamlit.")
+        print("URL de compartilhamento nao configurada em config.py")
