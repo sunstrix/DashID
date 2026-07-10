@@ -1,24 +1,24 @@
 """
-DashID - Módulo de Configurações Globais
+DashID - Modulo de Configuracoes Globais
 =========================================
 
-Define constantes, paleta de cores, configurações de tema e parâmetros
-de negócio utilizados em todo o dashboard.
+Define constantes, paleta de cores, configuracoes de tema e parametros
+de negocio utilizados em todo o dashboard.
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
 Autor: Alex Paulo
-Versão: 0.2.0
+Versao: 0.2.4
 """
 
 # ============================================================================
-# INFORMAÇÕES DO PROJETO
+# INFORMACOES DO PROJETO
 # ============================================================================
 PROJECT_NAME = "DashID"
-PROJECT_VERSION = "0.2.0"
+PROJECT_VERSION = "0.2.4"
 PROJECT_DESCRIPTION = (
-    "Dashboard de análise de performance diária de lojas da "
-    "NSF Cosméticos e Presentes (Cp Fani)"
+    "Dashboard de analise de performance diaria de lojas da "
+    "NSF Cosmeticos e Presentes (Cp Fani)"
 )
 PROJECT_AUTHOR = "Sunstrix"
 PROJECT_REPO = "https://github.com/sunstrix/DashID"
@@ -26,8 +26,8 @@ PROJECT_REPO = "https://github.com/sunstrix/DashID"
 # ============================================================================
 # PALETA DE CORES - TEMA ESCURO PREMIUM
 # ============================================================================
-# Identidade visual inspirada na NSF Cosméticos / Cp Fani, com acabamento
-# premium em tema escuro. A paleta combina dourado (sofisticação), magenta
+# Identidade visual inspirada na NSF Cosmeticos / Cp Fani, com acabamento
+# premium em tema escuro. A paleta combina dourado (sofisticacao), magenta
 # (identidade da marca) e tons neutros frios para o fundo.
 
 
@@ -42,7 +42,7 @@ class Colors:
     INPUT_BG = "#1A2038"            # Fundo de inputs e seletores
     HOVER_BG = "#1E2746"            # Fundo em estado hover
 
-    # --- Cores primárias da marca -------------------------------------------
+    # --- Cores primarias da marca -------------------------------------------
     PRIMARY = "#D4AF37"             # Dourado principal (identidade premium)
     PRIMARY_LIGHT = "#F4D03F"       # Dourado claro (destaques)
     PRIMARY_DARK = "#A8862A"        # Dourado escuro (contraste)
@@ -52,28 +52,28 @@ class Colors:
 
     # --- Texto --------------------------------------------------------------
     TEXT_PRIMARY = "#FFFFFF"        # Texto principal (branco puro)
-    TEXT_SECONDARY = "#B0B8C8"      # Texto secundário (cinza-azulado)
+    TEXT_SECONDARY = "#B0B8C8"      # Texto secundario (cinza-azulado)
     TEXT_MUTED = "#6B7280"          # Texto silenciado
     TEXT_ON_PRIMARY = "#0A0E1A"     # Texto sobre fundo dourado
 
-    # --- Cores semânticas (status) ------------------------------------------
+    # --- Cores semanticas (status) ------------------------------------------
     SUCCESS = "#10B981"             # Verde (positivo/acima da meta)
     SUCCESS_LIGHT = "#34D399"       # Verde claro
     DANGER = "#EF4444"              # Vermelho (negativo/abaixo da meta)
     DANGER_LIGHT = "#F87171"        # Vermelho claro
-    WARNING = "#F59E0B"             # Amarelo (alerta/atenção)
+    WARNING = "#F59E0B"             # Amarelo (alerta/atencao)
     WARNING_LIGHT = "#FBBF24"       # Amarelo claro
-    INFO = "#3B82F6"                # Azul (informação)
+    INFO = "#3B82F6"                # Azul (informacao)
     INFO_LIGHT = "#60A5FA"          # Azul claro
-    NEUTRAL = "#6B7280"             # Cinza (estável/sem variação)
+    NEUTRAL = "#6B7280"             # Cinza (estavel/sem variacao)
 
-    # --- Paleta para gráficos Plotly (10 cores distintas) -------------------
+    # --- Paleta para graficos Plotly (10 cores distintas) -------------------
     PLOTLY_PALETTE = [
         "#D4AF37",  # Dourado
         "#E91E63",  # Magenta
         "#3B82F6",  # Azul
         "#10B981",  # Verde
-        "#F59E0B",  # Âmbar
+        "#F59E0B",  # Ambar
         "#8B5CF6",  # Roxo
         "#EC4899",  # Rosa
         "#14B8A6",  # Teal
@@ -88,40 +88,40 @@ class Colors:
 
 
 # ============================================================================
-# CONFIGURAÇÕES DE NEGÓCIO
+# CONFIGURACOES DE NEGOCIO
 # ============================================================================
 
-# META DO ID (Índice de Identificação) = 115% (1.15)
+# META DO ID (Indice de Identificacao) = 115% (1.15)
 # Consulta de CPF do cliente no sistema.
-# REGRA DE OURO: Toda análise deve usar 1.15 como referência.
+# REGRA DE OURO: Toda analise deve usar 1.15 como referencia.
 META_ID = 1.15
 
 BUSINESS_CONFIG = {
-    # Índice de atingimento de meta (1.15 = 115% da meta)
+    # Indice de atingimento de meta (1.15 = 115% da meta)
     "META_THRESHOLD": META_ID,
 
-    # Limiares de performance (usados em formatação condicional)
-    # Ajustados em relação à meta de 1.15
+    # Limiares de performance (usados em formatacao condicional)
+    # Ajustados em relacao a meta de 1.15
     "PERFORMANCE_HIGH": 1.30,      # Acima de 130% = excelente
     "PERFORMANCE_MEDIUM": 1.20,    # Acima de 120% = bom
-    "PERFORMANCE_LOW": 1.10,       # Abaixo de 110% = atenção
-    "PERFORMANCE_CRITICAL": 1.00,  # Abaixo de 100% = crítico
+    "PERFORMANCE_LOW": 1.10,       # Abaixo de 110% = atencao
+    "PERFORMANCE_CRITICAL": 1.00,  # Abaixo de 100% = critico
 
-    # Análise de tendência
+    # Analise de tendencia
     "CONSECUTIVE_DROP_THRESHOLD": 3,  # Dias consecutivos de queda para alerta
 
-    # Médias móveis
+    # Medias moveis
     "MOVING_AVERAGE_SHORT": 3,     # MMA de 3 dias
     "MOVING_AVERAGE_LONG": 7,      # MMA de 7 dias
 
-    # Regressão linear (análise de tendência)
-    "TREND_REGRESSION_MIN_POINTS": 3,  # Mínimo de pontos para calcular tendência
+    # Regressao linear (analise de tendencia)
+    "TREND_REGRESSION_MIN_POINTS": 3,  # Minimo de pontos para calcular tendencia
 }
 
 # ============================================================================
-# CONFIGURAÇÕES DE CANAIS / REGIÕES
+# CONFIGURACOES DE CANAIS / REGIOES
 # ============================================================================
-# Prefixos das linhas de totalização presentes na planilha.
+# Prefixos das linhas de totalizacao presentes na planilha.
 # Usado para identificar e agrupar lojas por canal.
 
 CHANNEL_PREFIXES = {
@@ -130,38 +130,131 @@ CHANNEL_PREFIXES = {
     "CP_FANI": "TOTAL CANAL LOJA CP FANI",
 }
 
-# Mapeamento amigável para exibição
+# Mapeamento amigavel para exibicao
 CHANNEL_LABELS = {
-    "SBC": "São Bernardo do Campo",
-    "SP": "São Paulo",
+    "SBC": "Sao Bernardo do Campo",
+    "SP": "Sao Paulo",
     "CP_FANI": "Cp Fani (Consolidado)",
 }
 
 # ============================================================================
-# CONFIGURAÇÕES DE SHAREPOINT
+# CONFIGURACOES DE SHAREPOINT
+# ============================================================================
+#
+# IMPORTANTE - COMO OBTER A URL CORRETA DO SHAREPOINT:
+#
+# 1. Abra o arquivo "Relatorio de projecao mes julho 26.xlsx" no SharePoint
+#    (https://didiernsf.sharepoint.com)
+#
+# 2. Clique no botao "Compartilhar" (ou "Share") no canto superior direito
+#
+# 3. Na janela de compartilhamento, clique em "Qualquer pessoa com o link
+#    pode editar" (ou similar) para ajustar as permissoes
+#
+# 4. Selecione "Qualquer pessoa" e marque "Permitir download" (IMPORTANTE!)
+#
+# 5. Clique em "Aplicar" e depois em "Copiar link"
+#
+# 6. Cole o link abaixo no campo SHARE_URL
+#
+# FORMATO CORRETO da URL (exemplo):
+#   https://didiernsf.sharepoint.com/:x:/s/NSFcosmticosepresentesLTDA/
+#   EajHkR8mT8tNnQm5yZxYwB0Bxyz123?e=AbCdEf
+#
+# FORMATO INCORRETO (NAO USAR):
+#   {713fd0fc-9f7f-475a-b2af-911be0c9a52a}  <- Isso e um GUID, nao URL!
+#
 # ============================================================================
 
 SHAREPOINT_CONFIG = {
     # Link de compartilhamento direto do SharePoint
-    "SHARE_URL": "https://didiernsf.sharepoint.com/:x:/s/NSFcosmticosepresentesLTDA/IQAP_RPH98laR7KvkRvgyaUqAYM5B2REUbXMGolJdXTTFHQ?rtime=gaqRoIPe3kg",
-    
-    # Diretório local para cache do arquivo
+    #
+    # COLE AQUI a URL completa copiada do botao "Compartilhar" do SharePoint
+    # A URL deve começar com "https://" e conter "/:x:/" (indica arquivo Excel)
+    #
+    # Exemplo de URL valida:
+    # "https://didiernsf.sharepoint.com/:x:/s/NSFcosmticosepresentesLTDA/EajHkR8mT8tNnQm5yZxYwB0Bxyz123?e=AbCdEf"
+    #
+    # URL invalida (GUID - NAO funciona):
+    # "{713fd0fc-9f7f-475a-b2af-911be0c9a52a}"
+    #
+    # SUBSTITUA A URL ABAIXO pela URL real do seu arquivo:
+    "SHARE_URL": (
+        "https://didiernsf.sharepoint.com/:x:/s/"
+        "NSFcosmticosepresentesLTDA/"
+        "IQAP_RPH98laR7KvkRvgyaUqAYM5B2REUbXMGolJdXTTFHQ"
+        "?e=gaqRoIPe3kg"
+    ),
+
+    # Diretorio local para cache do arquivo
     "CACHE_DIR": "data",
     "CACHE_FILENAME": "relatorio_sharepoint.xlsx",
-    
+
     # TTL do cache em segundos (1 hora = 3600 segundos)
     "CACHE_TTL": 3600,
-    
-    # Timeout para requisições (segundos)
-    "TIMEOUT": 60,
+
+    # Timeout para requisicoes (segundos)
+    "TIMEOUT": 30,
+
+    # Validacao da URL (nao alterar)
+    "URL_MUST_START_WITH": "https://",
 }
 
 # ============================================================================
-# CONFIGURAÇÕES DE CACHE
+# VALIDACAO DA URL DO SHAREPOINT
+# ============================================================================
+
+
+def validate_sharepoint_url():
+    """Valida se a URL do SharePoint esta no formato correto.
+
+    Returns:
+        Tupla (is_valid, error_message)
+    """
+    url = SHAREPOINT_CONFIG.get("SHARE_URL", "")
+
+    if not url:
+        return False, "SHARE_URL esta vazio em config.py"
+
+    if not url.startswith(SHAREPOINT_CONFIG["URL_MUST_START_WITH"]):
+        return False, (
+            f"SHARE_URL invalido. Deve comecar com 'https://'. "
+            f"Valor atual: {url[:50]}..."
+        )
+
+    # Verifica se nao e um GUID (erro comum)
+    if url.startswith("{") and url.endswith("}"):
+        return False, (
+            "SHARE_URL contem um GUID em vez de uma URL completa. "
+            "Use o botao 'Compartilhar' do SharePoint para obter a URL correta."
+        )
+
+    # Verifica se parece ser uma URL do SharePoint
+    if "sharepoint.com" not in url.lower():
+        return False, (
+            "SHARE_URL nao parece ser uma URL do SharePoint. "
+            f"Valor atual: {url[:50]}..."
+        )
+
+    return True, "URL valida"
+
+
+# Executa validacao ao importar o modulo
+_url_valid, _url_error = validate_sharepoint_url()
+if not _url_valid:
+    import warnings
+    warnings.warn(
+        f"[DashID] Configuracao invalida do SharePoint: {_url_error}",
+        UserWarning,
+        stacklevel=2
+    )
+
+# ============================================================================
+# CONFIGURACOES DE CACHE
 # ============================================================================
 
 CACHE_CONFIG = {
-    # TTL (Time To Live) em segundos - 0 = cache permanente até mudar input
+    # TTL (Time To Live) em segundos - 0 = cache permanente ate mudar input
     "DATA_TTL": 0,
     "ANALYTICS_TTL": 0,
 
@@ -170,12 +263,12 @@ CACHE_CONFIG = {
 }
 
 # ============================================================================
-# CONFIGURAÇÕES DE LAYOUT
+# CONFIGURACOES DE LAYOUT
 # ============================================================================
 
 LAYOUT_CONFIG = {
     # Streamlit
-    "PAGE_TITLE": "DashID | NSF Cosméticos - Cp Fani",
+    "PAGE_TITLE": "DashID | NSF Cosmeticos - Cp Fani",
     "PAGE_ICON": "📊",
     "LAYOUT": "wide",                  # "wide" ou "centered"
     "INITIAL_SIDEBAR_STATE": "expanded",  # "expanded", "collapsed", "auto"
@@ -183,9 +276,9 @@ LAYOUT_CONFIG = {
     # Tipografia
     "FONT_FAMILY": "'Segoe UI', 'Inter', sans-serif",
 
-    # Dimensões
-    "CHART_HEIGHT": 450,               # Altura padrão dos gráficos (px)
-    "CHART_HEIGHT_SMALL": 300,         # Altura de gráficos pequenos
+    # Dimensoes
+    "CHART_HEIGHT": 450,               # Altura padrao dos graficos (px)
+    "CHART_HEIGHT_SMALL": 300,         # Altura de graficos pequenos
     "KPI_CARD_HEIGHT": 140,            # Altura dos cards de KPI
 
     # Heatmap
@@ -197,7 +290,7 @@ LAYOUT_CONFIG = {
 }
 
 # ============================================================================
-# CONFIGURAÇÕES DE PLOTLY (template unificado)
+# CONFIGURACOES DE PLOTLY (template unificado)
 # ============================================================================
 
 PLOTLY_LAYOUT_TEMPLATE = {
@@ -234,27 +327,27 @@ PLOTLY_LAYOUT_TEMPLATE = {
 }
 
 # ============================================================================
-# CONFIGURAÇÕES DE ARQUIVO
+# CONFIGURACOES DE ARQUIVO
 # ============================================================================
 
 FILE_CONFIG = {
-    # Nome padrão da aba da planilha
+    # Nome padrao da aba da planilha
     "SHEET_NAME": "Planilha1",
 
-    # Extensões aceitas no upload
+    # Extensoes aceitas no upload
     "ALLOWED_EXTENSIONS": [".xlsx", ".xlsm"],
 
-    # Tamanho máximo do arquivo (em bytes) - 20 MB
+    # Tamanho maximo do arquivo (em bytes) - 20 MB
     "MAX_FILE_SIZE_MB": 20,
     "MAX_FILE_SIZE_BYTES": 20 * 1024 * 1024,
 
-    # Diretório de dados (quando usando conector SharePoint)
+    # Diretorio de dados (quando usando conector SharePoint)
     "DATA_DIR": "data",
     "DEFAULT_FILENAME": "projecao_diaria.xlsx",
 }
 
 # ============================================================================
-# CONFIGURAÇÕES DE LOG
+# CONFIGURACOES DE LOG
 # ============================================================================
 
 LOG_CONFIG = {
@@ -332,7 +425,7 @@ CUSTOM_CSS = f"""
         overflow: hidden;
     }}
 
-    /* === Botões === */
+    /* === Botoes === */
     .stButton > button {{
         background-color: {Colors.CARD_BG};
         color: {Colors.TEXT_PRIMARY};
@@ -433,19 +526,19 @@ CUSTOM_CSS = f"""
 """
 
 # ============================================================================
-# UTILITÁRIOS
+# UTILITARIOS
 # ============================================================================
 
 
 def get_color_for_value(value: float, threshold: float = None) -> str:
-    """Retorna a cor apropriada para um valor de índice de atingimento.
+    """Retorna a cor apropriada para um valor de indice de atingimento.
 
     Args:
-        value: Valor do índice (ex.: 1.25, 1.10).
-        threshold: Limiar da meta (padrão: META_ID = 1.15).
+        value: Valor do indice (ex.: 1.25, 1.10).
+        threshold: Limiar da meta (padrao: META_ID = 1.15).
 
     Returns:
-        Código hexadecimal da cor correspondente.
+        Codigo hexadecimal da cor correspondente.
     """
     if threshold is None:
         threshold = META_ID
@@ -463,13 +556,13 @@ def get_color_for_value(value: float, threshold: float = None) -> str:
 
 
 def get_variation_color(variation: float) -> str:
-    """Retorna a cor para uma variação percentual.
+    """Retorna a cor para uma variacao percentual.
 
     Args:
-        variation: Valor da variação (ex.: 0.05 para +5%, -0.03 para -3%).
+        variation: Valor da variacao (ex.: 0.05 para +5%, -0.03 para -3%).
 
     Returns:
-        Código hexadecimal da cor.
+        Codigo hexadecimal da cor.
     """
     if variation > 0.001:
         return Colors.SUCCESS
@@ -484,7 +577,7 @@ def format_percentage(value: float, decimals: int = 2) -> str:
 
     Args:
         value: Valor a formatar (ex.: 1.1522).
-        decimals: Casas decimais (padrão: 2).
+        decimals: Casas decimais (padrao: 2).
 
     Returns:
         String formatada (ex.: "115.22%").
@@ -499,6 +592,6 @@ def format_meta_info() -> str:
     """Retorna string informativa sobre a meta do ID.
 
     Returns:
-        String formatada com informação da meta.
+        String formatada com informacao da meta.
     """
     return f"Meta do ID: {META_ID*100:.0f}% ({META_ID})"
