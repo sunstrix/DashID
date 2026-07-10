@@ -3,7 +3,7 @@ DashID - Módulo de Análise e Cálculo de Indicadores
 ====================================================
 
 Responsável por todos os cálculos de negócio, indicadores e análises:
-- KPIs de topo (cards): índice médio MTD, melhor/pior loja, acima/abaixo da meta
+- KPIs de topo (cards): índice médio MTD, melhor/pior loja, acima/abaixo da meta (1.15)
 - Análise horizontal: variação diária, tabela formatada, gráfico de linhas
 - Análise por dia da semana: agrupamento, boxplot, heatmap, melhor/pior dia
 - Ranking de lojas com variação semanal
@@ -15,8 +15,10 @@ Responsável por todos os cálculos de negócio, indicadores e análises:
 - Distribuição (histograma)
 - Funções auxiliares para exportação
 
+META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
+
 Autor: Alex Paulo
-Versão: 0.1.0
+Versão: 0.2.0
 """
 
 import io
@@ -32,6 +34,7 @@ from config import (
     CHANNEL_PREFIXES,
     Colors,
     LOG_CONFIG,
+    META_ID,
 )
 
 # Configuração de logging
@@ -55,8 +58,8 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
     - Índice médio geral do mês (MTD - Month to Date)
     - Loja com melhor índice acumulado
     - Loja com pior índice acumulado
-    - Número de lojas acima da meta (>= 1.0) no último dia disponível
-    - Número de lojas abaixo da meta (< 1.0) no último dia disponível
+    - Número de lojas acima da meta (>= 1.15) no último dia disponível
+    - Número de lojas abaixo da meta (< 1.15) no último dia disponível
 
     Args:
         df_stores: DataFrame com lojas nas linhas e datas nas colunas.
@@ -103,10 +106,10 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
     melhor_loja_valor = float(media_por_loja[melhor_loja_idx])
     pior_loja_valor = float(media_por_loja[pior_loja_idx])
 
-    # Lojas acima/abaixo da meta no último dia disponível
+    # Lojas acima/abaixo da meta no último dia disponível (META = 1.15)
     valores_ultimo_dia = df_stores[last_date].dropna()
-    acima_meta = int((valores_ultimo_dia >= BUSINESS_CONFIG["META_THRESHOLD"]).sum())
-    abaixo_meta = int((valores_ultimo_dia < BUSINESS_CONFIG["META_THRESHOLD"]).sum())
+    acima_meta = int((valores_ultimo_dia >= META_ID).sum())
+    abaixo_meta = int((valores_ultimo_dia < META_ID).sum())
 
     return {
         "media_geral": media_geral,
@@ -656,7 +659,7 @@ def aggregate_by_channel(
 ) -> pd.DataFrame:
     """Agrega dados por canal/região.
 
-    Usa as linhas de totalização já existentes na planilha (CANAL LOJA SBC, etc.)
+    Usa as linhas de totalização já existentes na planilha (SOMA LOJA SBC, etc.)
     e também calcula agregações manuais se necessário.
 
     Args:
@@ -795,4 +798,5 @@ def export_to_excel(df: pd.DataFrame, filename: str = "dashid_export.xlsx") -> b
 
 if __name__ == "__main__":
     print("Módulo analytics.py carregado com sucesso.")
+    print(f"Meta do ID: {META_ID} ({META_ID*100:.0f}%)")
     print(f"Configurações de negócio: {BUSINESS_CONFIG}")
