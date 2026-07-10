@@ -1,0 +1,53 @@
+# DashID - Dependências Python
+# ============================
+#
+# Para instalar todas as dependências:
+#   pip install -r requirements.txt
+#
+# Ou use o script instalar.bat (Windows)
+
+# ============================================================================
+# DEPENDÊNCIAS PRINCIPAIS
+# ============================================================================
+
+# Framework do dashboard
+streamlit==1.31.0
+
+# Manipulação e análise de dados
+pandas==2.2.0
+numpy==1.26.3
+
+# Leitura de arquivos Excel
+openpyxl==3.1.2
+
+# Gráficos interativos
+plotly==5.18.0
+
+# ============================================================================
+# CONECTOR SHAREPOINT (OPCIONAL)
+# ============================================================================
+
+# Requisições HTTP para Microsoft Graph API
+requests==2.31.0
+
+# Gerenciamento de variáveis de ambiente (.env)
+python-dotenv==1.0.1
+
+# Microsoft Authentication Library (recomendado para autenticação)
+msal==1.26.0
+
+# ============================================================================
+# DEPENDÊNCIAS DE DESENVOLVIMENTO (OPCIONAIS)
+# ============================================================================
+
+# Formatação de código
+black==24.1.1
+
+# Linting
+flake8==7.0.0
+
+# Type checking
+mypy==1.8.0
+
+# Testes
+pytest==8.0.0
