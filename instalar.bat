@@ -11,10 +11,11 @@ cd /d "%~dp0"
 :: Este script configura o ambiente virtual, instala as dependências e
 :: cria um atalho (executar.bat) para iniciar o dashboard facilmente.
 ::
-:: CORREÇÕES:
+:: CORREÇÕES APLICADAS:
 :: - Suporte a Python 3.14+ (Pillow >= 11.0.0)
-:: - Fallback com --only-binary :all: se Pillow falhar
-:: - Cria executar.bat em vez de run.bat
+:: - Atualização de pip, setuptools e wheel antes da instalação
+:: - Fallback com --only-binary :all: se Pillow falhar na compilação
+:: - Cria executar.bat para execução rápida
 ::
 :: Autor: Alex Paulo
 :: Versão: 0.2.0
@@ -24,6 +25,7 @@ echo.
 echo  ================================================
 echo   DashID - Instalador Automatizado
 echo   NSF Cosmeticos e Presentes (Cp Fani)
+echo   Meta do ID: 115%%
 echo  ================================================
 echo.
 
@@ -64,21 +66,21 @@ if not exist "venv" (
 echo.
 
 :: ----------------------------------------------------------------------------
-:: 3. Ativar Ambiente Virtual e Atualizar pip
+:: 3. Ativar Ambiente Virtual e Atualizar ferramentas de build
 :: ----------------------------------------------------------------------------
-echo [3/5] Ativando ambiente virtual e atualizando pip...
+echo [3/5] Ativando ambiente virtual e atualizando ferramentas...
 call venv\Scripts\activate.bat
 
-python -m pip install --upgrade pip --quiet
+python -m pip install --upgrade pip setuptools wheel --quiet
 if %errorlevel% neq 0 (
-    echo  [AVISO] Falha ao atualizar o pip. Continuando...
+    echo  [AVISO] Falha ao atualizar pip/setuptools/wheel. Continuando...
 ) else (
-    echo  [OK] pip atualizado.
+    echo  [OK] pip, setuptools e wheel atualizados.
 )
 echo.
 
 :: ----------------------------------------------------------------------------
-:: 4. Instalar Dependências
+:: 4. Instalar Dependências (com tratamento para Pillow em Python 3.14+)
 :: ----------------------------------------------------------------------------
 echo [4/5] Instalando dependencias do projeto...
 if not exist "requirements.txt" (
@@ -95,19 +97,20 @@ echo.
 pip install -r requirements.txt --quiet
 if %errorlevel% neq 0 (
     echo.
-    echo  [AVISO] Instalacao padrao falhou. Tentando com --only-binary :all:...
-    echo  Isso resolve problemas com Pillow em Python 3.14+.
+    echo  [AVISO] Instalacao padrao falhou (provavelmente Pillow em Python 3.14+).
+    echo  Tentando instalar Pillow com binarios pre-compilados...
     echo.
     
-    :: Tenta instalar Pillow primeiro com --only-binary
+    :: Instala Pillow primeiro com --only-binary
     pip install "pillow>=11.0.0" --only-binary :all: --quiet
     if %errorlevel% neq 0 (
-        echo  [ERRO] Falha ao instalar Pillow. Verifique sua conexao com a internet.
+        echo  [ERRO] Falha ao instalar Pillow mesmo com --only-binary.
+        echo  Verifique sua conexao com a internet ou a versao do Python.
         pause
         exit /b 1
     )
     
-    echo  [OK] Pillow instalado com sucesso.
+    echo  [OK] Pillow instalado com sucesso via binarios pre-compilados.
     echo  Instalando demais dependencias...
     
     :: Instala o resto das dependências
@@ -121,7 +124,7 @@ if %errorlevel% neq 0 (
     )
 )
 
-echo  [OK] Dependencias instaladas com sucesso.
+echo  [OK] Todas as dependencias instaladas com sucesso.
 echo.
 
 :: ----------------------------------------------------------------------------
@@ -138,10 +141,13 @@ echo echo.
 echo echo  ================================================
 echo echo   Iniciando DashID...
 echo echo   Dashboard de Performance de Lojas - Cp Fani
+echo echo   Meta do ID: 115%%
 echo echo  ================================================
 echo echo.
-echo echo  Abrindo o dashboard no navegador...
-echo echo  Se nao abrir automaticamente, acesse: http://localhost:8501
+echo echo  O dashboard sera aberto automaticamente no seu navegador.
+echo echo  Se nao abrir, acesse: http://localhost:8501
+echo echo.
+echo echo  Para encerrar o dashboard, pressione Ctrl+C nesta janela.
 echo echo.
 echo streamlit run app.py --server.headless true
 echo echo.
