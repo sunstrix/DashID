@@ -138,6 +138,25 @@ CHANNEL_LABELS = {
 }
 
 # ============================================================================
+# CONFIGURAÇÕES DE SHAREPOINT
+# ============================================================================
+
+SHAREPOINT_CONFIG = {
+    # Link de compartilhamento direto do SharePoint
+    "SHARE_URL": "https://didiernsf.sharepoint.com/:x:/s/NSFcosmticosepresentesLTDA/IQAP_RPH98laR7KvkRvgyaUqAYM5B2REUbXMGolJdXTTFHQ?rtime=gaqRoIPe3kg",
+    
+    # Diretório local para cache do arquivo
+    "CACHE_DIR": "data",
+    "CACHE_FILENAME": "relatorio_sharepoint.xlsx",
+    
+    # TTL do cache em segundos (1 hora = 3600 segundos)
+    "CACHE_TTL": 3600,
+    
+    # Timeout para requisições (segundos)
+    "TIMEOUT": 60,
+}
+
+# ============================================================================
 # CONFIGURAÇÕES DE CACHE
 # ============================================================================
 
