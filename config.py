@@ -5,15 +5,17 @@ DashID - Módulo de Configurações Globais
 Define constantes, paleta de cores, configurações de tema e parâmetros
 de negócio utilizados em todo o dashboard.
 
+META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
+
 Autor: Alex Paulo
-Versão: 0.1.0
+Versão: 0.2.0
 """
 
 # ============================================================================
 # INFORMAÇÕES DO PROJETO
 # ============================================================================
 PROJECT_NAME = "DashID"
-PROJECT_VERSION = "0.1.0"
+PROJECT_VERSION = "0.2.0"
 PROJECT_DESCRIPTION = (
     "Dashboard de análise de performance diária de lojas da "
     "NSF Cosméticos e Presentes (Cp Fani)"
@@ -89,15 +91,21 @@ class Colors:
 # CONFIGURAÇÕES DE NEGÓCIO
 # ============================================================================
 
+# META DO ID (Índice de Identificação) = 115% (1.15)
+# Consulta de CPF do cliente no sistema.
+# REGRA DE OURO: Toda análise deve usar 1.15 como referência.
+META_ID = 1.15
+
 BUSINESS_CONFIG = {
-    # Índice de atingimento de meta (1.0 = 100% da meta)
-    "META_THRESHOLD": 1.0,
+    # Índice de atingimento de meta (1.15 = 115% da meta)
+    "META_THRESHOLD": META_ID,
 
     # Limiares de performance (usados em formatação condicional)
-    "PERFORMANCE_HIGH": 1.15,      # Acima de 115% = excelente
-    "PERFORMANCE_MEDIUM": 1.05,    # Acima de 105% = bom
-    "PERFORMANCE_LOW": 0.95,       # Abaixo de 95% = atenção
-    "PERFORMANCE_CRITICAL": 0.85,  # Abaixo de 85% = crítico
+    # Ajustados em relação à meta de 1.15
+    "PERFORMANCE_HIGH": 1.30,      # Acima de 130% = excelente
+    "PERFORMANCE_MEDIUM": 1.20,    # Acima de 120% = bom
+    "PERFORMANCE_LOW": 1.10,       # Abaixo de 110% = atenção
+    "PERFORMANCE_CRITICAL": 1.00,  # Abaixo de 100% = crítico
 
     # Análise de tendência
     "CONSECUTIVE_DROP_THRESHOLD": 3,  # Dias consecutivos de queda para alerta
@@ -117,9 +125,9 @@ BUSINESS_CONFIG = {
 # Usado para identificar e agrupar lojas por canal.
 
 CHANNEL_PREFIXES = {
-    "SBC": "CANAL LOJA SBC",
-    "SP": "CANAL LOJA SP",
-    "CP_FANI": "CANAL LOJA CP FANI",
+    "SBC": "SOMA LOJA SBC",
+    "SP": "Total LOJA SP",
+    "CP_FANI": "TOTAL CANAL LOJA CP FANI",
 }
 
 # Mapeamento amigável para exibição
@@ -410,16 +418,19 @@ CUSTOM_CSS = f"""
 # ============================================================================
 
 
-def get_color_for_value(value: float, threshold: float = 1.0) -> str:
+def get_color_for_value(value: float, threshold: float = None) -> str:
     """Retorna a cor apropriada para um valor de índice de atingimento.
 
     Args:
-        value: Valor do índice (ex.: 1.15, 0.92).
-        threshold: Limiar da meta (padrão: 1.0).
+        value: Valor do índice (ex.: 1.25, 1.10).
+        threshold: Limiar da meta (padrão: META_ID = 1.15).
 
     Returns:
         Código hexadecimal da cor correspondente.
     """
+    if threshold is None:
+        threshold = META_ID
+
     if value >= BUSINESS_CONFIG["PERFORMANCE_HIGH"]:
         return Colors.SUCCESS
     elif value >= threshold:
@@ -447,3 +458,28 @@ def get_variation_color(variation: float) -> str:
         return Colors.DANGER
     else:
         return Colors.NEUTRAL
+
+
+def format_percentage(value: float, decimals: int = 2) -> str:
+    """Formata valor como percentual.
+
+    Args:
+        value: Valor a formatar (ex.: 1.1522).
+        decimals: Casas decimais (padrão: 2).
+
+    Returns:
+        String formatada (ex.: "115.22%").
+    """
+    import pandas as pd
+    if pd.isna(value):
+        return "-"
+    return f"{value*100:.{decimals}f}%"
+
+
+def format_meta_info() -> str:
+    """Retorna string informativa sobre a meta do ID.
+
+    Returns:
+        String formatada com informação da meta.
+    """
+    return f"Meta do ID: {META_ID*100:.0f}% ({META_ID})"
