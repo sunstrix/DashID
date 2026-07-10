@@ -217,10 +217,10 @@ def prepare_variation_table(
     if selected_stores:
         df_filtered = df_filtered.loc[df_filtered.index.isin(selected_stores)]
 
-    # Formata como percentual
+    # Formata como percentual usando map() (Pandas 2.1+)
     df_formatted = df_filtered.copy()
     for col in df_formatted.columns:
-        df_formatted[col] = df_formatted[col].apply(
+        df_formatted[col] = df_formatted[col].map(
             lambda x: f"{x*100:.2f}%" if pd.notna(x) else "-"
         )
 
