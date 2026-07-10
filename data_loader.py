@@ -7,30 +7,23 @@ Responsavel por:
 - Receber upload da planilha Excel (.xlsx) via Streamlit (FALLBACK)
 - Validar o arquivo (extensao, tamanho, estrutura)
 - Fazer parsing da planilha bruta com estrutura real:
-  * Coluna A: Codigo da Loja (float/int, NaN para totalizacoes)
+  * Coluna A: Codigo da Loja (float/int)
   * Coluna B: Nome da Loja (str)
-  * Coluna C: Cidade (str)
+  * Coluna C: Cidade (str) - USADO PARA AGRUPAMENTO POR CANAL
   * Colunas D+: Datas como datetime objects (dinamico)
   * Valores: strings com "%" (ex: "116.22%") -> converter para float (1.1622)
-- Separar lojas individuais de linhas de totalizacao por canal
+- Agrupar lojas por cidade (coluna C) para comparativo por canal
 - Adaptar-se dinamicamente ao numero de colunas de datas
 
 ESTRUTURA REAL DA PLANILHA (verificada):
 - Linha 1 (cabecalho): Codigo da Loja | (vazio) | Cidade | datas...
 - Linhas 2-10: Lojas SBC (9 lojas)
-- Linha 11: SOMA LOJA SBC (totalizacao)
-- Linhas 12-17: Lojas SP (6 lojas)
-- Linha 18: Total LOJA SP (totalizacao)
-- Linha 19: Linha em branco
-- Linha 20: TOTAL CANAL LOJA CP FANI (totalizacao geral)
-
-ESTRATEGIA DE LEITURA (v0.3.0):
-1. Tentar ler arquivo local (caminho configurado em LOCAL_CONFIG)
-2. Se falhar, tentar SharePoint via HTTP (fallback)
-3. Se ambos falharem, permitir upload manual
+- Linhas 11-16: Lojas SP (6 lojas)
+- SEM LINHAS DE TOTALIZACAO (removidas pelo usuario)
+- Agrupamento por cidade feito automaticamente via coluna C
 
 Autor: Alex Paulo
-Versao: 0.3.0
+Versao: 0.4.0
 """
 
 import io
@@ -44,12 +37,9 @@ import streamlit as st
 
 from config import (
     BUSINESS_CONFIG,
-    CHANNEL_PREFIXES,
     FILE_CONFIG,
-    LOCAL_CONFIG,
     LOG_CONFIG,
     META_ID,
-    validate_local_file,
 )
 
 # Configuracao de logging
@@ -218,23 +208,23 @@ def parse_worksheet(file_content: bytes) -> pd.DataFrame:
         raise ValueError(f"Nao foi possivel ler a planilha: {e}")
 
 
-def identify_stores_and_channels(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, List[str], List[str]]:
-    """Identifica e separa lojas individuais de linhas de totalizacao.
+def identify_stores_and_channels(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, List[str], Dict[str, List[str]]]:
+    """Identifica lojas individuais e agrupa por cidade (coluna C).
 
-    Analisa a coluna "Codigo da Loja" para identificar:
-    - Lojas individuais: codigo != NaN
-    - Linhas de totalizacao: codigo = NaN e nome contem "SOMA", "Total", "TOTAL"
-    - Linhas em branco: todas as colunas principais sao NaN
+    ATUALIZACAO v0.4.0:
+    - Removeu-se a busca por linhas de totalizacao (SOMA, Total, TOTAL)
+    - Agrupamento por cidade feito automaticamente via coluna C "Cidade"
+    - Retorna dicionario de cidades -> lista de lojas
 
     Args:
         df_raw: DataFrame bruto da planilha.
 
     Returns:
-        Tupla (df_stores, df_channels, store_names, channel_names):
+        Tupla (df_stores, df_channels, store_names, city_stores_dict):
             - df_stores: DataFrame apenas com lojas individuais
-            - df_channels: DataFrame com linhas de totalizacao por canal
-            - store_names: Lista de nomes das lojas individuais
-            - channel_names: Lista de nomes dos canais
+            - df_channels: DataFrame agrupado por cidade
+            - store_names: Lista de nomes das lojas (formato "Codigo - Nome")
+            - city_stores_dict: Dicionario {cidade: [lista de lojas]}
     """
     # Renomeia colunas para facilitar o trabalho
     # Coluna B (indice 1) pode estar vazia no header, entao renomeamos
@@ -244,70 +234,98 @@ def identify_stores_and_channels(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd
         if col_names[1] == "" or str(col_names[1]).startswith("Unnamed"):
             df_raw = df_raw.rename(columns={col_names[1]: "Loja"})
 
-    # Identifica coluna de codigo da loja
+    # Identifica colunas
     codigo_col = "Codigo da Loja" if "Codigo da Loja" in df_raw.columns else df_raw.columns[0]
     loja_col = "Loja" if "Loja" in df_raw.columns else df_raw.columns[1]
     cidade_col = "Cidade" if "Cidade" in df_raw.columns else df_raw.columns[2]
 
-    # Identifica linhas de totalizacao por canal
-    is_channel = pd.Series([False] * len(df_raw))
-    channel_keywords = ["SOMA", "Total", "TOTAL"]
+    # Filtra apenas linhas com codigo da loja (remove linhas vazias e de totalizacao)
+    # v0.4.0: Considera apenas linhas onde Codigo da Loja nao e NaN
+    is_store = df_raw[codigo_col].notna()
+    df_stores = df_raw[is_store].copy()
 
-    for keyword in channel_keywords:
-        mask = df_raw[loja_col].astype(str).str.contains(keyword, case=False, na=False)
-        is_channel = is_channel | mask
+    # Converte codigo para inteiro (remove .0)
+    df_stores[codigo_col] = df_stores[codigo_col].astype(int)
 
-    # Identifica linhas em branco (todas as colunas principais sao NaN)
-    is_blank = (
-        df_raw[codigo_col].isna() &
-        df_raw[loja_col].isna() &
-        df_raw[cidade_col].isna()
+    # Cria nome completo da loja: "Codigo - Nome"
+    df_stores["Nome_Completo"] = df_stores.apply(
+        lambda row: f"{int(row[codigo_col])} - {row[loja_col].strip()}" if pd.notna(row[loja_col]) else f"{int(row[codigo_col])}",
+        axis=1
     )
 
-    # Lojas individuais: nao e canal, nao e em branco, codigo != NaN
-    is_store = ~is_channel & ~is_blank & df_raw[codigo_col].notna()
+    # Extrai nomes das lojas (formato "Codigo - Nome")
+    store_names = df_stores["Nome_Completo"].tolist()
 
-    # Extrai DataFrames
-    df_stores = df_raw[is_store].copy()
-    df_channels = df_raw[is_channel].copy()
+    # Agrupa por cidade (coluna C)
+    city_stores_dict = {}
+    if cidade_col in df_stores.columns:
+        # Agrupa lojas por cidade
+        for cidade in df_stores[cidade_col].unique():
+            if pd.notna(cidade):
+                lojas_da_cidade = df_stores[df_stores[cidade_col] == cidade]["Nome_Completo"].tolist()
+                city_stores_dict[cidade] = lojas_da_cidade
 
-    # Extrai nomes das lojas (remove espacos em branco)
-    store_names = df_stores[loja_col].astype(str).str.strip().tolist()
-    channel_names = df_channels[loja_col].astype(str).str.strip().tolist()
+    # Cria DataFrame de canais agrupado por cidade
+    if not df_stores.empty and cidade_col in df_stores.columns:
+        # Agrupa dados por cidade
+        df_channels_list = []
+        for cidade, lojas in city_stores_dict.items():
+            # Filtra lojas desta cidade
+            df_city = df_stores[df_stores["Nome_Completo"].isin(lojas)]
+            
+            # Calcula media por cidade para cada data
+            city_data = {
+                "canal": cidade,
+                "num_lojas": len(lojas),
+                "lojas": ", ".join(lojas),
+            }
+            
+            # Colunas de data (todas exceto as 3 primeiras)
+            date_cols = df_stores.columns[3:]
+            for col in date_cols:
+                if col in df_city.columns:
+                    city_data[col] = df_city[col].mean()
+            
+            df_channels_list.append(city_data)
+        
+        df_channels = pd.DataFrame(df_channels_list)
+        df_channels = df_channels.set_index("canal")
+    else:
+        df_channels = pd.DataFrame()
 
-    logger.info(f"Identificadas {len(store_names)} lojas individuais e {len(channel_names)} canais")
+    logger.info(f"Identificadas {len(store_names)} lojas individuais em {len(city_stores_dict)} cidades")
+    logger.info(f"Cidades encontradas: {list(city_stores_dict.keys())}")
 
-    return df_stores, df_channels, store_names, channel_names
+    return df_stores, df_channels, store_names, city_stores_dict
 
 
 def clean_and_structure_data(
     df_stores: pd.DataFrame,
     df_channels: pd.DataFrame,
     store_names: List[str],
-    channel_names: List[str]
+    city_stores_dict: Dict[str, List[str]]
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Index]:
     """Limpa e estrutura os dados em formato analisavel.
 
     Transforma os DataFrames brutos em:
-    - DataFrame com lojas (indice = nome da loja, colunas = datas)
-    - DataFrame com canais (indice = nome do canal, colunas = datas)
+    - DataFrame com lojas (indice = "Codigo - Nome", colunas = datas)
+    - DataFrame com cidades (indice = cidade, colunas = datas)
     - Indice de datas (colunas)
 
     Args:
         df_stores: DataFrame com lojas individuais.
-        df_channels: DataFrame com totalizacoes por canal.
-        store_names: Lista de nomes das lojas.
-        channel_names: Lista de nomes dos canais.
+        df_channels: DataFrame com agrupamento por cidade.
+        store_names: Lista de nomes das lojas (formato "Codigo - Nome").
+        city_stores_dict: Dicionario {cidade: [lista de lojas]}.
 
     Returns:
         Tupla (df_stores_structured, df_channels_structured, dates):
             - df_stores_structured: DataFrame estruturado das lojas
-            - df_channels_structured: DataFrame estruturado dos canais
+            - df_channels_structured: DataFrame estruturado das cidades
             - dates: Indice de datas (colunas)
     """
     # Identifica colunas de data
     codigo_col = "Codigo da Loja" if "Codigo da Loja" in df_stores.columns else df_stores.columns[0]
-    loja_col = "Loja" if "Loja" in df_stores.columns else df_stores.columns[1]
     cidade_col = "Cidade" if "Cidade" in df_stores.columns else df_stores.columns[2]
 
     # Colunas de data sao todas exceto as 3 primeiras (codigo, loja, cidade)
@@ -335,10 +353,10 @@ def clean_and_structure_data(
     if len(df_stores) > 0:
         df_stores_values = df_stores.iloc[:, 3:].copy()
 
-        # Aplica conversao de valores usando map() (Pandas 2.1+)
-        df_stores_values = df_stores_values.map(convert_percentage_string)
+        # Aplica conversao de valores
+        df_stores_values = df_stores_values.applymap(convert_percentage_string)
 
-        # Define indice como nomes das lojas
+        # Define indice como nomes completos das lojas ("Codigo - Nome")
         df_stores_structured = df_stores_values.copy()
         df_stores_structured.index = store_names
 
@@ -348,20 +366,19 @@ def clean_and_structure_data(
     else:
         df_stores_structured = pd.DataFrame()
 
-    # Para df_channels: mesma logica
-    if len(df_channels) > 0:
-        df_channels_values = df_channels.iloc[:, 3:].copy()
-        df_channels_values = df_channels_values.map(convert_percentage_string)
+    # Para df_channels (cidades): mesma logica
+    if not df_channels.empty:
+        df_channels_values = df_channels.iloc[:, 2:].copy()  # Pula colunas "canal", "num_lojas", "lojas"
+        df_channels_values = df_channels_values.applymap(convert_percentage_string)
 
         df_channels_structured = df_channels_values.copy()
-        df_channels_structured.index = channel_names
 
         if len(dates_index) == df_channels_values.shape[1]:
             df_channels_structured.columns = dates_index
     else:
         df_channels_structured = pd.DataFrame()
 
-    logger.info(f"Dados estruturados: {len(df_stores_structured)} lojas, {len(df_channels_structured)} canais, {len(dates_index)} datas")
+    logger.info(f"Dados estruturados: {len(df_stores_structured)} lojas, {len(df_channels_structured)} cidades, {len(dates_index)} datas")
 
     return df_stores_structured, df_channels_structured, dates_index
 
@@ -378,7 +395,7 @@ def load_data_from_upload(uploaded_file) -> dict:
     Funcao principal que orquestra todo o processo:
     1. Valida o arquivo
     2. Le a planilha bruta
-    3. Identifica lojas e canais
+    3. Identifica lojas e agrupa por cidade (coluna C)
     4. Estrutura os dados
     5. Retorna dicionario com DataFrames prontos para analise
 
@@ -387,11 +404,11 @@ def load_data_from_upload(uploaded_file) -> dict:
 
     Returns:
         Dicionario com:
-            - "stores": DataFrame das lojas (indice = loja, colunas = datas)
-            - "channels": DataFrame dos canais (indice = canal, colunas = datas)
+            - "stores": DataFrame das lojas (indice = "Codigo - Nome", colunas = datas)
+            - "channels": DataFrame das cidades (indice = cidade, colunas = datas)
             - "dates": Indice de datas
-            - "store_names": Lista de nomes das lojas
-            - "channel_names": Lista de nomes dos canais
+            - "store_names": Lista de nomes das lojas (formato "Codigo - Nome")
+            - "city_stores_dict": Dicionario {cidade: [lista de lojas]}
             - "metadata": Dicionario com metadados do arquivo
 
     Raises:
@@ -408,12 +425,12 @@ def load_data_from_upload(uploaded_file) -> dict:
     # Faz parsing da planilha
     df_raw = parse_worksheet(file_content)
 
-    # Identifica lojas e canais
-    df_stores, df_channels, store_names, channel_names = identify_stores_and_channels(df_raw)
+    # Identifica lojas e agrupa por cidade
+    df_stores, df_channels, store_names, city_stores_dict = identify_stores_and_channels(df_raw)
 
     # Estrutura os dados
     df_stores_structured, df_channels_structured, dates = clean_and_structure_data(
-        df_stores, df_channels, store_names, channel_names
+        df_stores, df_channels, store_names, city_stores_dict
     )
 
     # Metadados do arquivo
@@ -422,10 +439,11 @@ def load_data_from_upload(uploaded_file) -> dict:
         "file_size_bytes": uploaded_file.size,
         "file_size_mb": uploaded_file.size / (1024 * 1024),
         "num_stores": len(store_names),
-        "num_channels": len(channel_names),
+        "num_channels": len(city_stores_dict),
         "num_days": len(dates),
         "date_range": (dates.min(), dates.max()) if len(dates) > 0 else (None, None),
         "source": "upload",
+        "cities": list(city_stores_dict.keys()),
     }
 
     logger.info(f"Dados carregados com sucesso: {metadata}")
@@ -435,7 +453,8 @@ def load_data_from_upload(uploaded_file) -> dict:
         "channels": df_channels_structured,
         "dates": dates,
         "store_names": store_names,
-        "channel_names": channel_names,
+        "channel_names": list(city_stores_dict.keys()),
+        "city_stores_dict": city_stores_dict,
         "metadata": metadata,
     }
 
@@ -458,6 +477,8 @@ def load_data_from_local() -> dict:
     Raises:
         ValueError: Se o arquivo local nao existir ou nao puder ser lido.
     """
+    from config import LOCAL_CONFIG, validate_local_file
+
     # Valida se arquivo local existe
     is_valid, error_msg, file_path = validate_local_file()
     
@@ -477,12 +498,12 @@ def load_data_from_local() -> dict:
         # Faz parsing da planilha
         df_raw = parse_worksheet(file_content)
 
-        # Identifica lojas e canais
-        df_stores, df_channels, store_names, channel_names = identify_stores_and_channels(df_raw)
+        # Identifica lojas e agrupa por cidade
+        df_stores, df_channels, store_names, city_stores_dict = identify_stores_and_channels(df_raw)
 
         # Estrutura os dados
         df_stores_structured, df_channels_structured, dates = clean_and_structure_data(
-            df_stores, df_channels, store_names, channel_names
+            df_stores, df_channels, store_names, city_stores_dict
         )
 
         # Metadados do arquivo
@@ -492,11 +513,12 @@ def load_data_from_local() -> dict:
             "file_size_bytes": file_size,
             "file_size_mb": file_size / (1024 * 1024),
             "num_stores": len(store_names),
-            "num_channels": len(channel_names),
+            "num_channels": len(city_stores_dict),
             "num_days": len(dates),
             "date_range": (dates.min(), dates.max()) if len(dates) > 0 else (None, None),
             "source": "local",
             "last_modified": pd.Timestamp.fromtimestamp(file_path.stat().st_mtime).strftime("%d/%m/%Y %H:%M:%S"),
+            "cities": list(city_stores_dict.keys()),
         }
 
         logger.info(f"Dados locais carregados com sucesso: {metadata}")
@@ -506,7 +528,8 @@ def load_data_from_local() -> dict:
             "channels": df_channels_structured,
             "dates": dates,
             "store_names": store_names,
-            "channel_names": channel_names,
+            "channel_names": list(city_stores_dict.keys()),
+            "city_stores_dict": city_stores_dict,
             "metadata": metadata,
         }
 
@@ -530,6 +553,8 @@ def check_data_sources() -> dict:
             - "local_error": str or None
             - "recommended_source": str ("local", "sharepoint", ou "upload")
     """
+    from config import LOCAL_CONFIG, validate_local_file
+
     result = {
         "local_available": False,
         "local_path": str(LOCAL_CONFIG.get("FILE_PATH", "")),
@@ -646,6 +671,7 @@ if __name__ == "__main__":
         try:
             data = load_data_from_local()
             print(f"SUCESSO! {data['metadata']['num_stores']} lojas carregadas")
+            print(f"Cidades: {data['metadata']['cities']}")
             print(f"Periodo: {data['metadata']['date_range']}")
         except Exception as e:
             print(f"ERRO: {e}")
