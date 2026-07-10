@@ -1,5 +1,5 @@
 """
-DashID - Aplicacao Principal Streamlit (v0.3.3)
+DashID - Aplicacao Principal Streamlit (v0.3.4)
 ================================================
 
 ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
@@ -14,13 +14,15 @@ ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
-CORRECOES APLICADAS (v0.3.3):
-- Funcao auxiliar _plotly_layout_without_title() para evitar conflito
-  de 'title' duplicado em fig.update_layout()
-- Todas as 8 secoes corrigidas para usar o template sem title
+CORRECOES APLICADAS (v0.3.4):
+- Funcao _get_base_layout() para evitar conflito de parametros duplicados
+- Todas as 8 secoes corrigidas para usar DUAS chamadas separadas:
+  1. fig.update_layout(_get_base_layout())
+  2. fig.update_layout(title="...", xaxis="...", ...)
+- Evita erro: "got multiple values for keyword argument"
 
 Autor: Alex Paulo
-Versao: 0.3.3
+Versao: 0.3.4
 """
 
 import streamlit as st
@@ -103,23 +105,20 @@ except Exception as e:
     logger.error(f"Erro ao injetar CSS: {e}")
 
 # ============================================================================
-# FUNCAO AUXILIAR: TEMPLATE PLOTLY SEM TITLE
+# FUNCAO AUXILIAR: TEMPLATE PLOTLY BASE
 # ============================================================================
-# O PLOTLY_LAYOUT_TEMPLATE["layout"] contem uma chave "title" (para fonte/cor).
-# Quando fazemos fig.update_layout(title="...", **template), o title e passado
-# duas vezes, causando TypeError. Esta funcao retorna uma copia do template
-# SEM a chave "title" para evitar o conflito.
 
 
-def _plotly_layout_without_title() -> dict:
-    """Retorna o template Plotly sem a chave 'title' para evitar conflitos.
-
+def _get_base_layout():
+    """Retorna o layout base do template Plotly.
+    
+    Importante: Esta funcao retorna uma copia do template para evitar
+    conflitos quando combinado com outros parametros em update_layout().
+    
     Returns:
-        Dicionario com todas as configuracoes do template exceto 'title'.
+        Dicionario com configuracoes base do template.
     """
-    layout = PLOTLY_LAYOUT_TEMPLATE["layout"].copy()
-    layout.pop("title", None)
-    return layout
+    return PLOTLY_LAYOUT_TEMPLATE["layout"].copy()
 
 
 # ============================================================================
@@ -508,19 +507,19 @@ def render_visao_geral(df_stores: pd.DataFrame):
             annotation_font_color=Colors.WARNING,
         )
 
-        # CORRECAO: Usar template SEM title para evitar conflito
+        # CORRECAO: Duas chamadas separadas para evitar conflito
+        fig.update_layout(_get_base_layout())
         fig.update_layout(
             title=f"Indice Medio de Atingimento - Evolucao Diaria (Meta: {META_ID*100:.0f}%)",
             xaxis_title="Data",
             yaxis_title="Indice de Atingimento",
             height=LAYOUT_CONFIG["CHART_HEIGHT"],
-            **_plotly_layout_without_title(),
         )
 
         st.plotly_chart(fig, use_container_width=True)
 
         # Tabela resumo por loja
-        st.subheader("📋 Performance por Loja (Ultimo Dia)")
+        st.subheader(" Performance por Loja (Ultimo Dia)")
         has_data = df_stores.notna().any()
         dates_with_data = has_data[has_data].index
         if len(dates_with_data) > 0:
@@ -549,7 +548,7 @@ def render_visao_geral(df_stores: pd.DataFrame):
 def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
     """Renderiza a secao de Analise Horizontal."""
     try:
-        st.header("📈 Analise Horizontal (Dia a Dia)")
+        st.header(" Analise Horizontal (Dia a Dia)")
         st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Variacao = (dia atual / dia anterior) - 1")
 
         df_variation = calculate_daily_variation(df_stores)
@@ -562,7 +561,7 @@ def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
             col1, col2 = st.columns(2)
 
             with col1:
-                st.markdown("**🟢 Maiores Altas**")
+                st.markdown("** Maiores Altas**")
                 if top_movers["maiores_altas"]:
                     for loja, var in top_movers["maiores_altas"]:
                         st.markdown(f"- **{loja}**: {format_variation(var)}")
@@ -603,14 +602,14 @@ def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
             annotation_font_color=Colors.WARNING,
         )
 
-        # CORRECAO: Usar template SEM title para evitar conflito
+        # CORRECAO: Duas chamadas separadas para evitar conflito
+        fig.update_layout(_get_base_layout())
         fig.update_layout(
             title=f"Evolucao Diaria do Indice por Loja (Meta: {META_ID*100:.0f}%)",
             xaxis_title="Data",
             yaxis_title="Indice de Atingimento",
             height=LAYOUT_CONFIG["CHART_HEIGHT"],
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            **_plotly_layout_without_title(),
         )
 
         st.plotly_chart(fig, use_container_width=True)
@@ -648,13 +647,13 @@ def render_dia_da_semana(df_stores: pd.DataFrame, selected_stores: list):
                 annotation_font_color=Colors.WARNING,
             )
 
-            # CORRECAO: Usar template SEM title para evitar conflito
+            # CORRECAO: Duas chamadas separadas
+            fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title=f"Indice Medio por Dia da Semana (Meta: {META_ID*100:.0f}%)",
                 xaxis_title="Dia da Semana",
                 yaxis_title="Indice de Atingimento",
                 height=LAYOUT_CONFIG["CHART_HEIGHT_SMALL"],
-                **_plotly_layout_without_title(),
             )
 
             st.plotly_chart(fig, use_container_width=True)
@@ -720,13 +719,13 @@ def render_ranking(df_stores: pd.DataFrame):
                 annotation_font_color=Colors.WARNING,
             )
 
-            # CORRECAO: Usar template SEM title para evitar conflito
+            # CORRECAO: Duas chamadas separadas
+            fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title=f"Ranking de Lojas por Indice Medio (Meta: {META_ID*100:.0f}%)",
                 xaxis_title="Indice de Atingimento",
                 yaxis=dict(autorange="reversed"),
                 height=max(400, len(df_ranking) * 30),
-                **_plotly_layout_without_title(),
             )
 
             st.plotly_chart(fig, use_container_width=True)
@@ -796,13 +795,13 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
                 annotation_font_color=Colors.WARNING,
             )
 
-            # CORRECAO: Usar template SEM title para evitar conflito
+            # CORRECAO: Duas chamadas separadas
+            fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title=f"Medias Moveis - {loja_selecionada} (Meta: {META_ID*100:.0f}%)",
                 xaxis_title="Data",
                 yaxis_title="Indice de Atingimento",
                 height=LAYOUT_CONFIG["CHART_HEIGHT"],
-                **_plotly_layout_without_title(),
             )
 
             st.plotly_chart(fig, use_container_width=True)
@@ -851,7 +850,6 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
             fig.update_layout(
                 title="Distribuicao de Tendencias por Loja",
                 height=400,
-                **_plotly_layout_without_title(),
             )
 
             st.plotly_chart(fig, use_container_width=True)
@@ -943,12 +941,13 @@ def render_alertas_consistencia(df_stores: pd.DataFrame):
                 )
             )
 
+            # CORRECAO: Duas chamadas separadas
+            fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title="Volatilidade por Loja (Desvio Padrao)",
                 xaxis_title="Desvio Padrao",
                 yaxis=dict(autorange="reversed"),
                 height=max(400, len(df_volatility) * 25),
-                **_plotly_layout_without_title(),
             )
 
             st.plotly_chart(fig, use_container_width=True)
@@ -998,13 +997,13 @@ def render_comparativo_canal(df_stores: pd.DataFrame, df_channels: pd.DataFrame)
                 annotation_font_color=Colors.WARNING,
             )
 
-            # CORRECAO: Usar template SEM title para evitar conflito
+            # CORRECAO: Duas chamadas separadas
+            fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title=f"Indice Medio por Canal/Regiao (Meta: {META_ID*100:.0f}%)",
                 xaxis_title="Canal",
                 yaxis_title="Indice de Atingimento",
                 height=LAYOUT_CONFIG["CHART_HEIGHT_SMALL"],
-                **_plotly_layout_without_title(),
             )
 
             st.plotly_chart(fig, use_container_width=True)
@@ -1035,13 +1034,13 @@ def render_distribuicao(df_stores: pd.DataFrame):
                 )
             )
 
-            # CORRECAO: Usar template SEM title para evitar conflito
+            # CORRECAO: Duas chamadas separadas
+            fig.update_layout(_get_base_layout())
             fig.update_layout(
                 title=f"Distribuicao dos Indices Diarios (Meta: {META_ID*100:.0f}%)",
                 xaxis_title="Faixa de Indice",
                 yaxis_title="Frequencia",
                 height=LAYOUT_CONFIG["CHART_HEIGHT"],
-                **_plotly_layout_without_title(),
             )
 
             st.plotly_chart(fig, use_container_width=True)
@@ -1131,7 +1130,7 @@ def main():
                     unsafe_allow_html=True,
                 )
             else:
-                st.info("👈 Carregando dados... Aguarde.")
+                st.info(" Carregando dados... Aguarde.")
             return
 
         data = st.session_state["data"]
@@ -1152,7 +1151,7 @@ def main():
             render_dia_da_semana(df_stores, selected_stores)
         elif navigation == "🏆 Ranking de Lojas":
             render_ranking(df_stores)
-        elif navigation == "📉 Medias Moveis e Tendencia":
+        elif navigation == " Medias Moveis e Tendencia":
             render_medias_moveis_tendencia(df_stores, selected_stores)
         elif navigation == "⚠️ Alertas e Consistencia":
             render_alertas_consistencia(df_stores)
