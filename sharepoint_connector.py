@@ -24,7 +24,7 @@ Requisitos (quando habilitado):
 - msal (Microsoft Authentication Library)
 
 Autor: Alex Paulo
-Versão: 0.1.0
+Versão: 0.2.0
 """
 
 import logging
@@ -34,7 +34,7 @@ from typing import Optional, Tuple
 
 import requests
 
-from config import LOG_CONFIG
+from config import LOG_CONFIG, META_ID
 
 # Configuração de logging
 logging.basicConfig(
@@ -71,7 +71,7 @@ class SharePointConfig:
     # SharePoint / Graph API
     SITE_ID: Optional[str] = os.getenv("SHAREPOINT_SITE_ID")
     DRIVE_ID: Optional[str] = os.getenv("SHAREPOINT_DRIVE_ID")
-    FILE_PATH: Optional[str] = os.getenv("SHAREPOINT_FILE_PATH", "projecao_diaria.xlsx")
+    FILE_PATH: Optional[str] = os.getenv("SHAREPOINT_FILE_PATH", "Relatorio_de_projecao.xlsx")
 
     # Escopos necessários para Graph API
     SCOPES = ["https://graph.microsoft.com/.default"]
@@ -318,6 +318,7 @@ def check_sharepoint_status() -> dict:
 if __name__ == "__main__":
     # Teste básico (apenas para desenvolvimento)
     print("Módulo sharepoint_connector.py carregado com sucesso.")
+    print(f"Meta do ID: {META_ID} ({META_ID*100:.0f}%)")
     print(f"SharePoint configurado: {SharePointConfig.is_configured()}")
     print(f"python-dotenv disponível: {DOTENV_AVAILABLE}")
 
