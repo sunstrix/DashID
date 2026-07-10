@@ -9,10 +9,15 @@ cd /d "%~dp0"
 :: DashID - Script de Instalação Automatizada (Windows)
 :: ============================================================================
 :: Este script configura o ambiente virtual, instala as dependências e
-:: cria um atalho (run.bat) para iniciar o dashboard facilmente.
+:: cria um atalho (executar.bat) para iniciar o dashboard facilmente.
+::
+:: CORREÇÕES:
+:: - Suporte a Python 3.14+ (Pillow >= 11.0.0)
+:: - Fallback com --only-binary :all: se Pillow falhar
+:: - Cria executar.bat em vez de run.bat
 ::
 :: Autor: Alex Paulo
-:: Versão: 0.1.0
+:: Versão: 0.2.0
 :: ============================================================================
 
 echo.
@@ -73,7 +78,7 @@ if %errorlevel% neq 0 (
 echo.
 
 :: ----------------------------------------------------------------------------
-:: 4. Instalar Dependencias
+:: 4. Instalar Dependências
 :: ----------------------------------------------------------------------------
 echo [4/5] Instalando dependencias do projeto...
 if not exist "requirements.txt" (
@@ -84,21 +89,45 @@ if not exist "requirements.txt" (
 )
 
 echo  Isso pode levar alguns minutos. Por favor, aguarde...
+echo.
+
+:: Tenta instalar normalmente primeiro
 pip install -r requirements.txt --quiet
 if %errorlevel% neq 0 (
     echo.
-    echo  [ERRO] Falha ao instalar algumas dependencias.
-    echo  Verifique sua conexao com a internet e tente novamente.
-    pause
-    exit /b 1
+    echo  [AVISO] Instalacao padrao falhou. Tentando com --only-binary :all:...
+    echo  Isso resolve problemas com Pillow em Python 3.14+.
+    echo.
+    
+    :: Tenta instalar Pillow primeiro com --only-binary
+    pip install "pillow>=11.0.0" --only-binary :all: --quiet
+    if %errorlevel% neq 0 (
+        echo  [ERRO] Falha ao instalar Pillow. Verifique sua conexao com a internet.
+        pause
+        exit /b 1
+    )
+    
+    echo  [OK] Pillow instalado com sucesso.
+    echo  Instalando demais dependencias...
+    
+    :: Instala o resto das dependências
+    pip install -r requirements.txt --quiet
+    if %errorlevel% neq 0 (
+        echo.
+        echo  [ERRO] Falha ao instalar algumas dependencias.
+        echo  Verifique sua conexao com a internet e tente novamente.
+        pause
+        exit /b 1
+    )
 )
+
 echo  [OK] Dependencias instaladas com sucesso.
 echo.
 
 :: ----------------------------------------------------------------------------
-:: 5. Criar Script de Execucao (run.bat)
+:: 5. Criar Script de Execução (executar.bat)
 :: ----------------------------------------------------------------------------
-echo [5/5] Criando script de execucao rapida (run.bat)...
+echo [5/5] Criando script de execucao rapida (executar.bat)...
 
 (
 echo @echo off
@@ -108,16 +137,23 @@ echo call venv\Scripts\activate.bat
 echo echo.
 echo echo  ================================================
 echo echo   Iniciando DashID...
+echo echo   Dashboard de Performance de Lojas - Cp Fani
 echo echo  ================================================
 echo echo.
+echo echo  Abrindo o dashboard no navegador...
+echo echo  Se nao abrir automaticamente, acesse: http://localhost:8501
+echo echo.
 echo streamlit run app.py --server.headless true
-) > run.bat
+echo echo.
+echo echo  Dashboard encerrado.
+echo pause
+) > executar.bat
 
-echo  [OK] Arquivo 'run.bat' criado.
+echo  [OK] Arquivo 'executar.bat' criado.
 echo.
 
 :: ----------------------------------------------------------------------------
-:: Finalizacao
+:: Finalização
 :: ----------------------------------------------------------------------------
 echo  ================================================
 echo   INSTALACAO CONCLUIDA COM SUCESSO!
@@ -125,7 +161,7 @@ echo  ================================================
 echo.
 echo  Para iniciar o dashboard, basta executar:
 echo.
-echo     run.bat
+echo     executar.bat
 echo.
 echo  Ou abra o terminal na pasta do projeto e digite:
 echo     streamlit run app.py
