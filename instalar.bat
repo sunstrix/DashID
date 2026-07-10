@@ -2,6 +2,9 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
+:: Muda para o diretório onde este script está localizado
+cd /d "%~dp0"
+
 :: ============================================================================
 :: DashID - Script de Instalação Automatizada (Windows)
 :: ============================================================================
@@ -100,6 +103,7 @@ echo [5/5] Criando script de execucao rapida (run.bat)...
 (
 echo @echo off
 echo chcp 65001 ^>nul
+echo cd /d "%%~dp0"
 echo call venv\Scripts\activate.bat
 echo echo.
 echo echo  ================================================
