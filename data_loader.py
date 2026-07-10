@@ -22,17 +22,31 @@ ESTRUTURA REAL DA PLANILHA (verificada):
 - SEM LINHAS DE TOTALIZACAO (removidas pelo usuario)
 - Agrupamento por cidade feito automaticamente via coluna C
 
+CORRECOES v0.4.3:
+- Adicionada funcao parse_date_string() para converter "1-Jul" em Timestamp
+- Conversao explicita de colunas de datas para Timestamp (evita str vs datetime)
+- Conversao explicita para float64 (evita dtype object)
+- Log detalhado das datas convertidas
+
 CORRECOES v0.4.2:
 - Substituido applymap() por map() (compativel Pandas 2.1+)
 
+CORRECOES v0.4.1:
+- Converte valores para float ANTES de calcular media por cidade
+
+CORRECOES v0.4.0:
+- Removeu-se a busca por linhas de totalizacao (SOMA, Total, TOTAL)
+- Agrupamento por cidade feito automaticamente via coluna C "Cidade"
+
 Autor: Alex Paulo
-Versao: 0.4.2
+Versao: 0.4.3
 """
 
 import io
 import logging
 from typing import Optional, Tuple, List, Dict
 from pathlib import Path
+from datetime import datetime
 
 import pandas as pd
 import numpy as np
@@ -136,6 +150,56 @@ def convert_percentage_string(value) -> Optional[float]:
             return None
 
     return None
+
+
+# ============================================================================
+# CONVERSAO DE DATAS (STRING "1-Jul" -> TIMESTAMP)
+# ============================================================================
+
+
+def parse_date_string(date_str) -> Optional[pd.Timestamp]:
+    """Converte string de data (ex: '1-Jul', '2-Jul') para Timestamp.
+    
+    Assume ano 2026 para datas sem ano especificado.
+    
+    Args:
+        date_str: String de data (ex: "1-Jul", "2-Jul", "10-Jul")
+    
+    Returns:
+        pd.Timestamp ou None se nao conseguir converter
+    """
+    if pd.isna(date_str):
+        return None
+    
+    try:
+        # Se ja e Timestamp, retorna como esta
+        if isinstance(date_str, pd.Timestamp):
+            return date_str
+        
+        # Se e datetime, converte para Timestamp
+        if isinstance(date_str, datetime):
+            return pd.Timestamp(date_str)
+        
+        # Converte string
+        date_str = str(date_str).strip()
+        if not date_str:
+            return None
+        
+        # Tenta parsear no formato "dia-mes" (ex: "1-Jul", "10-Jul")
+        # Assume ano 2026
+        parsed = pd.to_datetime(date_str + "-2026", format="%d-%b-%Y", errors="coerce")
+        
+        if pd.notna(parsed):
+            return parsed
+        
+        # Tenta formato alternativo "dia/mes" (ex: "1/Jul")
+        parsed = pd.to_datetime(date_str + "/2026", format="%d/%b/%Y", errors="coerce")
+        
+        return parsed if pd.notna(parsed) else None
+        
+    except Exception as e:
+        logger.debug(f"Erro ao converter data '{date_str}': {e}")
+        return None
 
 
 # ============================================================================
@@ -326,6 +390,11 @@ def clean_and_structure_data(
     - DataFrame com cidades (indice = cidade, colunas = datas)
     - Indice de datas (colunas)
 
+    CORRECAO v0.4.3:
+    - Converte colunas de data para Timestamp usando parse_date_string()
+    - Converte valores explicitamente para float64
+    - Log detalhado das datas convertidas
+
     Args:
         df_stores: DataFrame com lojas individuais.
         df_channels: DataFrame com agrupamento por cidade.
@@ -345,23 +414,27 @@ def clean_and_structure_data(
     # Colunas de data sao todas exceto as 3 primeiras (codigo, loja, cidade)
     date_columns_raw = df_stores.columns[3:]
 
-    # Converte colunas de data para Timestamp
+    # CORRECAO v0.4.3: Converte colunas de data para Timestamp
     dates = []
+    date_columns_converted = []
+    
     for col in date_columns_raw:
-        try:
-            if isinstance(col, pd.Timestamp):
-                dates.append(col)
-            else:
-                parsed = pd.to_datetime(col, errors="coerce")
-                if pd.notna(parsed):
-                    dates.append(parsed)
-                else:
-                    dates.append(pd.NaT)
-        except:
+        # Usa parse_date_string() para converter "1-Jul" em Timestamp
+        parsed_date = parse_date_string(col)
+        if parsed_date is not None:
+            dates.append(parsed_date)
+            date_columns_converted.append(parsed_date)
+        else:
+            # Se nao conseguir converter, usa NaT
             dates.append(pd.NaT)
+            date_columns_converted.append(pd.NaT)
 
     # Cria indice de datas (remove NaT)
     dates_index = pd.Index([d for d in dates if pd.notna(d)])
+    
+    logger.info(f"Datas convertidas: {len(dates_index)} datas validas encontradas")
+    if len(dates_index) > 0:
+        logger.info(f"Periodo: {dates_index.min()} a {dates_index.max()}")
 
     # Para df_stores: extrai valores e converte de string com "%" para float
     if len(df_stores) > 0:
@@ -370,13 +443,21 @@ def clean_and_structure_data(
         # CORRECAO v0.4.2: Usar map() em vez de applymap() (Pandas 2.1+)
         df_stores_values = df_stores_values.map(convert_percentage_string)
 
+        # CORRECAO v0.4.3: Converter explicitamente para float64
+        df_stores_values = df_stores_values.astype('float64')
+
         # Define indice como nomes completos das lojas ("Codigo - Nome")
         df_stores_structured = df_stores_values.copy()
         df_stores_structured.index = store_names
 
-        # Define colunas como datas
-        if len(dates_index) == df_stores_values.shape[1]:
-            df_stores_structured.columns = dates_index
+        # Define colunas como datas convertidas (apenas datas validas)
+        valid_dates = [d for d in date_columns_converted if pd.notna(d)]
+        if len(valid_dates) == df_stores_values.shape[1]:
+            df_stores_structured.columns = pd.Index(valid_dates)
+        else:
+            # Se houver inconsistencia, usa apenas as datas validas
+            logger.warning(f"Inconsistencia: {len(valid_dates)} datas validas, mas {df_stores_values.shape[1]} colunas")
+            df_stores_structured = df_stores_structured.loc[:, [c for c in df_stores_structured.columns if pd.notna(c)]]
     else:
         df_stores_structured = pd.DataFrame()
 
@@ -384,14 +465,26 @@ def clean_and_structure_data(
     if not df_channels.empty:
         df_channels_values = df_channels.iloc[:, 2:].copy()  # Pula colunas "canal", "num_lojas", "lojas"
         # Os valores ja foram convertidos para float em identify_stores_and_channels
+        
+        # CORRECAO v0.4.3: Converter explicitamente para float64
+        df_channels_values = df_channels_values.astype('float64')
+        
         df_channels_structured = df_channels_values.copy()
 
-        if len(dates_index) == df_channels_values.shape[1]:
-            df_channels_structured.columns = dates_index
+        valid_dates = [d for d in date_columns_converted if pd.notna(d)]
+        if len(valid_dates) == df_channels_values.shape[1]:
+            df_channels_structured.columns = pd.Index(valid_dates)
+        else:
+            logger.warning(f"Inconsistencia em canais: {len(valid_dates)} datas validas, mas {df_channels_values.shape[1]} colunas")
+            df_channels_structured = df_channels_structured.loc[:, [c for c in df_channels_structured.columns if pd.notna(c)]]
     else:
         df_channels_structured = pd.DataFrame()
 
     logger.info(f"Dados estruturados: {len(df_stores_structured)} lojas, {len(df_channels_structured)} cidades, {len(dates_index)} datas")
+    
+    # Log do tipo das colunas para debug
+    if not df_stores_structured.empty:
+        logger.info(f"Tipo das colunas: {df_stores_structured.dtypes.iloc[0]}")
 
     return df_stores_structured, df_channels_structured, dates_index
 
