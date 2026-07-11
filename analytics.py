@@ -17,12 +17,22 @@ Responsável por todos os cálculos de negócio, indicadores e análises:
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
-CORRECOES APLICADAS (v0.4.1):
+CORRECOES APLICADAS (v0.5.0):
+- BUG 1: Corrigidos calculos para usar ultimo valor acumulado (MTD) em vez de media
+- Nova funcao _get_latest_values() para extrair valores da ultima data
+- Nova funcao _deaccumulate() para transformar dados acumulados em valores diarios
+- calculate_kpi_cards: usa ultimo valor acumulado (nao media de todas as celulas)
+- calculate_store_ranking: usa valor acumulado da ultima data do periodo
+- aggregate_by_channel: usa ultimo valor da serie do canal
+- analyze_by_weekday: desacumula dados antes de agrupar por dia da semana
+- analyze_weekday_by_store: desacumula dados antes de agrupar por loja
+- calculate_moving_averages: aplica sobre serie desacumulada
+- calculate_volatility: calcula sobre serie desacumulada
+
+CORRECOES ANTERIORES (v0.4.1):
 - BUG 1: Adicionada funcao _ensure_datetime_columns() para filtrar APENAS colunas de datas
 - BUG 2: Conversao explicita para float64 antes de calculos matematicos
 - BUG 4: Mantido map() em vez de applymap() (Pandas 2.1+)
-- MELHORIA: Logging detalhado para diagnosticar DataFrames vazios
-- MELHORIA: Tratamento melhorado para colunas de datas
 
 CORRECOES ANTERIORES (v0.3.3):
 - calculate_kpi_cards(): Filtragem segura de NaN usando pd.notna()
@@ -30,7 +40,7 @@ CORRECOES ANTERIORES (v0.3.3):
 - calculate_moving_averages(): Removido parametro axis (incompativel Pandas 2.1+)
 
 Autor: Alex Paulo
-Versao: 0.4.1
+Versao: 0.5.0
 """
 
 import io
@@ -57,6 +67,59 @@ logging.basicConfig(
     datefmt=LOG_CONFIG["DATE_FORMAT"],
 )
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# FUNCOES AUXILIARES NOVAS (v0.5.0)
+# ============================================================================
+
+
+def _get_latest_values(df: pd.DataFrame) -> pd.Series:
+    """Extrai os valores da ultima data disponivel para cada linha.
+    
+    IMPORTANTE: Os dados sao acumulados (MTD), entao o valor correto
+    e o da ultima coluna de data, nao a media de todas.
+    
+    Args:
+        df: DataFrame com colunas de data (Timestamp)
+    
+    Returns:
+        Series com os valores da ultima data para cada linha
+    """
+    if df.empty or len(df.columns) == 0:
+        return pd.Series(dtype='float64')
+    
+    # Encontra a ultima data com dados
+    last_date = get_last_available_date(df)
+    
+    if last_date is None:
+        return pd.Series(dtype='float64')
+    
+    # Retorna apenas a coluna da ultima data
+    return df[last_date]
+
+
+def _deaccumulate(df: pd.DataFrame) -> pd.DataFrame:
+    """Transforma dados acumulados (MTD) em valores diarios.
+    
+    Usa pct_change() para calcular a variacao percentual diaria.
+    Isso e necessario para analises por dia da semana, medias moveis
+    e volatilidade, que nao fazem sentido com dados acumulados.
+    
+    Args:
+        df: DataFrame com dados acumulados (colunas = datas)
+    
+    Returns:
+        DataFrame com valores diarios (variacao percentual)
+    """
+    if df.empty or len(df.columns) < 2:
+        return df
+    
+    # pct_change(axis=1) calcula variacao ao longo das colunas (datas)
+    # A primeira coluna sera NaN (nao ha dia anterior)
+    df_daily = df.pct_change(axis=1)
+    
+    return df_daily
 
 
 # ============================================================================
@@ -135,15 +198,15 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
     """Calcula os KPIs principais para exibição em cards no topo do dashboard.
 
     KPIs calculados:
-    - Índice médio geral do mês (MTD - Month to Date)
-    - Loja com melhor índice acumulado
-    - Loja com pior índice acumulado
+    - Índice médio geral do mês (MTD - Month to Date) - ULTIMO VALOR ACUMULADO
+    - Loja com melhor índice acumulado - ULTIMO VALOR ACUMULADO
+    - Loja com pior índice acumulado - ULTIMO VALOR ACUMULADO
     - Número de lojas acima da meta (>= 1.15) no último dia disponível
     - Número de lojas abaixo da meta (< 1.15) no último dia disponível
 
-    CORRECAO v0.4.0:
-    - Usa _ensure_datetime_columns() para filtrar APENAS colunas de datas
-    - Evita erro: TypeError: '<=' not supported between str and datetime
+    CORRECAO v0.5.0:
+    - Usa _get_latest_values() para extrair apenas valores da ultima data
+    - Nao faz media de todas as celulas (dados sao acumulados MTD)
 
     Args:
         df_stores: DataFrame com lojas nas linhas e datas nas colunas.
@@ -182,49 +245,50 @@ def calculate_kpi_cards(df_stores: pd.DataFrame) -> Dict:
 
     logger.debug(f"df_clean shape: {df_clean.shape}, columns: {list(df_clean.columns)}")
 
-    # Última data com dados disponíveis
-    last_date = get_last_available_date(df_clean)
-    if last_date is None:
-        logger.warning("Nenhuma data com dados disponiveis em calculate_kpi_cards")
+    # CORRECAO v0.5.0: Usar apenas valores da ultima data (dados sao acumulados MTD)
+    valores_ultimo_dia = _get_latest_values(df_clean)
+    
+    if valores_ultimo_dia.empty:
+        logger.warning("Nenhum valor encontrado na ultima data em calculate_kpi_cards")
         return {
             "media_geral": 0.0,
             "melhor_loja": {"nome": "-", "valor": 0.0},
             "pior_loja": {"nome": "-", "valor": 0.0},
             "acima_meta": 0,
             "abaixo_meta": 0,
-            "total_lojas": len(df_clean),
+            "total_lojas": 0,
             "ultimo_dia": None,
         }
 
-    # Índice médio geral do mês (MTD) - média de todos os valores não-NaN
-    # CORREÇÃO: Usar pd.isna() em vez de np.isnan() para compatibilidade
-    media_geral = df_clean.values.flatten()
-    # Converter para float e filtrar NaN de forma segura
-    media_geral_float = []
-    for val in media_geral:
-        try:
-            if pd.notna(val):
-                media_geral_float.append(float(val))
-        except (ValueError, TypeError):
-            pass
+    # Remove valores NaN
+    valores_ultimo_dia = valores_ultimo_dia.dropna()
     
-    media_geral = float(np.mean(media_geral_float)) if len(media_geral_float) > 0 else 0.0
+    if len(valores_ultimo_dia) == 0:
+        return {
+            "media_geral": 0.0,
+            "melhor_loja": {"nome": "-", "valor": 0.0},
+            "pior_loja": {"nome": "-", "valor": 0.0},
+            "acima_meta": 0,
+            "abaixo_meta": 0,
+            "total_lojas": 0,
+            "ultimo_dia": get_last_available_date(df_clean),
+        }
 
-    # CORRECAO v0.4.0: Agora df_clean.columns sao APENAS datetime, entao a comparacao funciona
-    # Índice acumulado por loja (média do mês até a última data)
-    df_until_last = df_clean.loc[:, df_clean.columns <= last_date]
-    media_por_loja = df_until_last.mean(axis=1)
+    # CORRECAO v0.5.0: Media geral e a media dos valores da ultima data (nao de todas as celulas)
+    media_geral = float(valores_ultimo_dia.mean())
 
-    # Melhor e pior loja
-    melhor_loja_idx = media_por_loja.idxmax()
-    pior_loja_idx = media_por_loja.idxmin()
-    melhor_loja_valor = float(media_por_loja[melhor_loja_idx])
-    pior_loja_valor = float(media_por_loja[pior_loja_idx])
+    # CORRECAO v0.5.0: Melhor e pior loja usam valores da ultima data (nao media do periodo)
+    melhor_loja_idx = valores_ultimo_dia.idxmax()
+    pior_loja_idx = valores_ultimo_dia.idxmin()
+    melhor_loja_valor = float(valores_ultimo_dia[melhor_loja_idx])
+    pior_loja_valor = float(valores_ultimo_dia[pior_loja_idx])
 
     # Lojas acima/abaixo da meta no último dia disponível (META = 1.15)
-    valores_ultimo_dia = df_clean[last_date].dropna()
     acima_meta = int((valores_ultimo_dia >= META_ID).sum())
     abaixo_meta = int((valores_ultimo_dia < META_ID).sum())
+
+    # Encontra a data do ultimo valor
+    last_date = get_last_available_date(df_clean)
 
     logger.info(f"KPIs calculados: media_geral={media_geral:.2%}, acima_meta={acima_meta}, abaixo_meta={abaixo_meta}")
 
@@ -363,10 +427,10 @@ def prepare_variation_table(
 def analyze_by_weekday(df: pd.DataFrame) -> pd.DataFrame:
     """Agrupar os valores por dia da semana (segunda a domingo).
 
-    CORRECAO v0.4.0:
-    - Usa _ensure_datetime_columns() para garantir colunas de datas
-
-    Calcula média, mediana e desvio padrão do índice por loja e consolidado.
+    CORRECAO v0.5.0:
+    - Desacumula os dados antes de agrupar por dia da semana
+    - Usa _deaccumulate() para transformar MTD em valores diarios
+    - Agora faz sentido calcular media/mediana por dia da semana
 
     Args:
         df: DataFrame com lojas nas linhas e datas nas colunas.
@@ -375,7 +439,6 @@ def analyze_by_weekday(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame com:
             - Índice: dias da semana (0=segunda, 6=domingo)
             - Colunas: média, mediana, desvio padrão (consolidado)
-            - E por loja (se aplicável)
     """
     if df.empty:
         logger.warning("DataFrame vazio em analyze_by_weekday")
@@ -388,11 +451,21 @@ def analyze_by_weekday(df: pd.DataFrame) -> pd.DataFrame:
         logger.error("DataFrame limpo vazio em analyze_by_weekday")
         return pd.DataFrame()
 
+    # CORRECAO v0.5.0: Desacumular dados antes de agrupar por dia da semana
+    df_daily = _deaccumulate(df_clean)
+    
+    # Remove a primeira coluna (que sera NaN apos pct_change)
+    df_daily = df_daily.iloc[:, 1:]
+    
+    if df_daily.empty:
+        logger.warning("DataFrame diario vazio apos desacumulacao em analyze_by_weekday")
+        return pd.DataFrame()
+
     # Mapeia cada data para o dia da semana (0=segunda, 6=domingo)
-    weekdays = df_clean.columns.dayofweek
+    weekdays = df_daily.columns.dayofweek
 
     # Cria DataFrame com dia da semana como índice auxiliar
-    df_with_weekday = df_clean.T.copy()
+    df_with_weekday = df_daily.T.copy()
     df_with_weekday["weekday"] = weekdays
 
     # Agrupa por dia da semana
@@ -423,8 +496,9 @@ def analyze_by_weekday(df: pd.DataFrame) -> pd.DataFrame:
 def analyze_weekday_by_store(df: pd.DataFrame) -> pd.DataFrame:
     """Analisa o desempenho por dia da semana para cada loja individualmente.
 
-    CORRECAO v0.4.0:
-    - Usa _ensure_datetime_columns() para garantir colunas de datas
+    CORRECAO v0.5.0:
+    - Desacumula os dados antes de agrupar por dia da semana
+    - Usa _deaccumulate() para transformar MTD em valores diarios
 
     Args:
         df: DataFrame com lojas nas linhas e datas nas colunas.
@@ -445,8 +519,18 @@ def analyze_weekday_by_store(df: pd.DataFrame) -> pd.DataFrame:
         logger.error("DataFrame limpo vazio em analyze_weekday_by_store")
         return pd.DataFrame()
 
-    weekdays = df_clean.columns.dayofweek
-    df_with_weekday = df_clean.T.copy()
+    # CORRECAO v0.5.0: Desacumular dados antes de agrupar por dia da semana
+    df_daily = _deaccumulate(df_clean)
+    
+    # Remove a primeira coluna (que sera NaN apos pct_change)
+    df_daily = df_daily.iloc[:, 1:]
+    
+    if df_daily.empty:
+        logger.warning("DataFrame diario vazio apos desacumulacao em analyze_weekday_by_store")
+        return pd.DataFrame()
+
+    weekdays = df_daily.columns.dayofweek
+    df_with_weekday = df_daily.T.copy()
     df_with_weekday["weekday"] = weekdays
 
     # Agrupa por dia da semana e calcula média para cada loja
@@ -511,10 +595,11 @@ def calculate_store_ranking(
     df_stores: pd.DataFrame,
     period: str = "month"
 ) -> pd.DataFrame:
-    """Calcula o ranking de lojas pelo índice médio acumulado.
+    """Calcula o ranking de lojas pelo índice acumulado.
 
-    CORRECAO v0.4.0:
-    - Usa _ensure_datetime_columns() para garantir colunas de datas
+    CORRECAO v0.5.0:
+    - Usa valor acumulado da ultima data do periodo (nao media)
+    - Dados sao MTD, entao o valor correto e o ultimo dia
 
     Args:
         df_stores: DataFrame com lojas nas linhas e datas nas colunas.
@@ -545,8 +630,8 @@ def calculate_store_ranking(
     else:
         df_period = df_clean
 
-    # Índice médio por loja
-    media_por_loja = df_period.mean(axis=1)
+    # CORRECAO v0.5.0: Usar valor acumulado da ultima data do periodo (nao media)
+    indice_por_loja = _get_latest_values(df_period)
 
     # Variação frente à semana anterior (se houver dados suficientes)
     variacao_semanal = pd.Series(np.nan, index=df_clean.index)
@@ -556,25 +641,25 @@ def calculate_store_ranking(
             # Semana atual (últimos 7 dias)
             start_current = last_date - pd.Timedelta(days=6)
             df_current = df_clean.loc[:, (df_clean.columns >= start_current) & (df_clean.columns <= last_date)]
-            media_current = df_current.mean(axis=1)
+            indice_current = _get_latest_values(df_current)
 
             # Semana anterior (7 dias antes disso)
             end_previous = start_current - pd.Timedelta(days=1)
             start_previous = end_previous - pd.Timedelta(days=6)
             df_previous = df_clean.loc[:, (df_clean.columns >= start_previous) & (df_clean.columns <= end_previous)]
             if not df_previous.empty:
-                media_previous = df_previous.mean(axis=1)
+                indice_previous = _get_latest_values(df_previous)
                 # Variação percentual
-                variacao_semanal = ((media_current / media_previous) - 1) * 100
+                variacao_semanal = ((indice_current / indice_previous) - 1) * 100
 
     # Monta DataFrame do ranking
     ranking = pd.DataFrame({
-        "loja": media_por_loja.index,
-        "indice_medio": media_por_loja.values,
+        "loja": indice_por_loja.index,
+        "indice_medio": indice_por_loja.values,
         "variacao_semanal": variacao_semanal.values,
     })
 
-    # Ordena por índice médio (decrescente)
+    # Ordena por índice (decrescente)
     ranking = ranking.sort_values("indice_medio", ascending=False).reset_index(drop=True)
     ranking["posicao"] = ranking.index + 1
 
@@ -592,8 +677,9 @@ def calculate_moving_averages(
 ) -> Dict[int, pd.DataFrame]:
     """Calcula médias móveis para suavizar ruído diário.
 
-    CORRECAO v0.4.0:
-    - Usa _ensure_datetime_columns() para garantir colunas de datas e float64
+    CORRECAO v0.5.0:
+    - Aplica media movel sobre serie desacumulada (valores diarios)
+    - Dados MTD nao fazem sentido para medias moveis
 
     CORRECAO (v0.3.3): Pandas 2.1+ nao aceita axis como argumento nomeado.
     Usamos .T.rolling().T para aplicar rolling nas colunas.
@@ -622,10 +708,20 @@ def calculate_moving_averages(
         logger.error("DataFrame limpo vazio em calculate_moving_averages")
         return {w: pd.DataFrame() for w in windows}
 
+    # CORRECAO v0.5.0: Desacumular antes de aplicar media movel
+    df_daily = _deaccumulate(df_clean)
+    
+    # Remove a primeira coluna (que sera NaN apos pct_change)
+    df_daily = df_daily.iloc[:, 1:]
+    
+    if df_daily.empty:
+        logger.warning("DataFrame diario vazio apos desacumulacao em calculate_moving_averages")
+        return {w: pd.DataFrame() for w in windows}
+
     result = {}
     for window in windows:
         # CORRECAO: Pandas 2.1+ - usar transposicao em vez de axis
-        df_ma = df_clean.T.rolling(window=window, min_periods=1).mean().T
+        df_ma = df_daily.T.rolling(window=window, min_periods=1).mean().T
         result[window] = df_ma
 
     return result
@@ -639,10 +735,9 @@ def calculate_moving_averages(
 def calculate_volatility(df: pd.DataFrame) -> pd.DataFrame:
     """Calcula a volatilidade (desvio padrão) do índice por loja.
 
-    CORRECAO v0.4.0:
-    - Usa _ensure_datetime_columns() para garantir colunas de datas e float64
-
-    Lojas com menor desvio padrão são mais consistentes.
+    CORRECAO v0.5.0:
+    - Calcula volatilidade sobre serie desacumulada (valores diarios)
+    - Desvio padrao de serie acumulada nao reflete volatilidade real
 
     Args:
         df: DataFrame com lojas nas linhas e datas nas colunas.
@@ -662,7 +757,17 @@ def calculate_volatility(df: pd.DataFrame) -> pd.DataFrame:
         logger.error("DataFrame limpo vazio em calculate_volatility")
         return pd.DataFrame()
 
-    std_por_loja = df_clean.std(axis=1)
+    # CORRECAO v0.5.0: Desacumular antes de calcular volatilidade
+    df_daily = _deaccumulate(df_clean)
+    
+    # Remove a primeira coluna (que sera NaN apos pct_change)
+    df_daily = df_daily.iloc[:, 1:]
+    
+    if df_daily.empty:
+        logger.warning("DataFrame diario vazio apos desacumulacao em calculate_volatility")
+        return pd.DataFrame()
+
+    std_por_loja = df_daily.std(axis=1)
 
     # Classificação baseada em limiares
     classificacao = pd.cut(
@@ -868,8 +973,9 @@ def aggregate_by_channel(
 ) -> pd.DataFrame:
     """Agrega dados por canal/região.
 
-    Usa as linhas de totalização já existentes na planilha (SOMA LOJA SBC, etc.)
-    e também calcula agregações manuais se necessário.
+    CORRECAO v0.5.0:
+    - Usa ultimo valor da serie do canal (nao media)
+    - Dados sao acumulados MTD
 
     Args:
         df_channels: DataFrame com totalizações por canal (do data_loader).
@@ -892,7 +998,8 @@ def aggregate_by_channel(
             if len(valores) == 0:
                 continue
 
-            indice_medio = float(valores.mean())
+            # CORRECAO v0.5.0: Usar ultimo valor da serie (nao media)
+            indice_medio = float(valores.iloc[-1])
             ultimo_valor = float(valores.iloc[-1]) if len(valores) > 0 else np.nan
             penultimo_valor = float(valores.iloc[-2]) if len(valores) > 1 else np.nan
 
@@ -911,7 +1018,7 @@ def aggregate_by_channel(
             results.append({
                 "canal": canal_nome,
                 "indice_medio": indice_medio,
-                "num_lojas": np.nan,  # Não temos essa info nas totalizações
+                "num_lojas": np.nan,
                 "variacao_ultimo_dia": variacao,
             })
 
