@@ -1,5 +1,5 @@
 """
-DashID - Aplicacao Principal Streamlit (v0.4.1)
+DashID - Aplicacao Principal Streamlit (v0.5.0)
 ================================================
 
 ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
@@ -14,6 +14,10 @@ ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
 
+CORRECOES v0.5.0:
+- BUG 2: Corrigidas strings do menu lateral com emojis corretos
+- BUG 3: Reorganizada ordem do menu (Filtros movido para cima)
+
 CORRECOES v0.4.1:
 - BUG 3: Substituido use_container_width por width='stretch' (Streamlit 2025+)
 
@@ -24,7 +28,7 @@ ATUALIZACOES v0.4.0:
 - Comparativo por Canal agora mostra cidades (SBC, Sao Paulo)
 
 Autor: Alex Paulo
-Versao: 0.4.1
+Versao: 0.5.0
 """
 
 import streamlit as st
@@ -198,10 +202,15 @@ def load_data_with_fallback():
 
 
 def render_sidebar():
-    """Renderiza a barra lateral com estrategia de fallback inteligente."""
+    """Renderiza a barra lateral com estrategia de fallback inteligente.
+    
+    CORRECAO v0.5.0:
+    - BUG 2: Strings do menu com emojis corretos
+    - BUG 3: Ordem reorganizada (Filtros movido para cima)
+    """
     try:
         with st.sidebar:
-            # Logo/Titulo
+            # 1. TITULO (primeiro, nao mexer)
             st.markdown(
                 f"""
                 <div style="text-align: center; padding: 20px 0;">
@@ -223,9 +232,6 @@ def render_sidebar():
 
             st.markdown("---")
 
-            # STATUS DA FONTE DE DADOS
-            st.markdown("### 📂 Fonte de Dados")
-
             # Carrega dados automaticamente se ainda nao carregou
             if "data" not in st.session_state:
                 if "load_attempted" not in st.session_state:
@@ -243,6 +249,52 @@ def render_sidebar():
                             st.session_state["load_error"] = error
                             st.error("❌ Nao foi possivel carregar dados automaticamente")
                             st.info("Use o upload manual abaixo.")
+
+            # 2. FILTROS DE LOJA (CORRECAO BUG 3: movido para cima)
+            if "data" in st.session_state:
+                try:
+                    st.markdown("### 🔍 Filtros")
+                    store_names = st.session_state["data"]["store_names"]
+                    
+                    # v0.4.0: TODAS as lojas selecionadas por padrao
+                    selected_stores = st.multiselect(
+                        "Selecione as lojas:",
+                        options=store_names,
+                        default=store_names,  # Todas selecionadas
+                        help="Todas as lojas estao selecionadas por padrao.",
+                    )
+                    
+                    # Se usuario desmarcar tudo, usa todas
+                    if not selected_stores:
+                        selected_stores = store_names
+                    
+                    st.session_state["selected_stores"] = selected_stores
+                    
+                    st.markdown("---")
+                except Exception as e:
+                    st.error(f"Erro nos filtros: {e}")
+
+            # 3. NAVEGACAO (CORRECAO BUG 2: emojis corretos)
+            st.markdown("### 🧭 Navegacao")
+            navigation = st.radio(
+                "Selecione a analise:",
+                [
+                    "📊 Visao Geral",
+                    "📈 Analise Horizontal",
+                    "📅 Dia da Semana",              # CORRECAO: adicionado emoji
+                    "🏆 Ranking de Lojas",
+                    "📉 Medias Moveis e Tendencia",
+                    "⚠️ Alertas e Consistencia",     # CORRECAO: adicionado emoji
+                    "🏢 Comparativo por Canal",      # CORRECAO: adicionado emoji
+                    "📊 Distribuicao",               # CORRECAO: adicionado emoji
+                ],
+                index=0,
+            )
+
+            st.markdown("---")
+
+            # 4. FONTE DE DADOS (movido para baixo)
+            st.markdown("### 📂 Fonte de Dados")
 
             # Informacoes da fonte usada
             if "data" in st.session_state:
@@ -306,26 +358,7 @@ def render_sidebar():
 
             st.markdown("---")
 
-            # NAVEGACAO
-            st.markdown("### 🧭 Navegacao")
-            navigation = st.radio(
-                "Selecione a analise:",
-                [
-                    "📊 Visao Geral",
-                    "📈 Analise Horizontal",
-                    " Dia da Semana",
-                    "🏆 Ranking de Lojas",
-                    "📉 Medias Moveis e Tendencia",
-                    "️ Alertas e Consistencia",
-                    " Comparativo por Canal",
-                    " Distribuicao",
-                ],
-                index=0,
-            )
-
-            st.markdown("---")
-
-            # INFORMACOES DO ARQUIVO
+            # 5. DADOS CARREGADOS (por ultimo)
             if "data" in st.session_state:
                 try:
                     metadata = st.session_state["data"]["metadata"]
@@ -363,29 +396,6 @@ def render_sidebar():
                     )
                 except Exception as e:
                     st.error(f"Erro ao mostrar metadados: {e}")
-
-            # FILTROS DE LOJA - TODAS SELECIONADAS POR PADRAO
-            if "data" in st.session_state:
-                try:
-                    st.markdown("---")
-                    st.markdown("### 🔍 Filtros")
-                    store_names = st.session_state["data"]["store_names"]
-                    
-                    # v0.4.0: TODAS as lojas selecionadas por padrao
-                    selected_stores = st.multiselect(
-                        "Selecione as lojas:",
-                        options=store_names,
-                        default=store_names,  # Todas selecionadas
-                        help="Todas as lojas estao selecionadas por padrao.",
-                    )
-                    
-                    # Se usuario desmarcar tudo, usa todas
-                    if not selected_stores:
-                        selected_stores = store_names
-                    
-                    st.session_state["selected_stores"] = selected_stores
-                except Exception as e:
-                    st.error(f"Erro nos filtros: {e}")
 
             return navigation
     except Exception as e:
