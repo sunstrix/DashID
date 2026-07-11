@@ -1,5 +1,5 @@
 """
-DashID - Aplicacao Principal Streamlit (v0.5.0)
+DashID - Aplicacao Principal Streamlit (v0.5.1)
 ================================================
 
 ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
@@ -13,6 +13,10 @@ ESTRATEGIA DE FONTE DE DADOS (ORDEM DE PRIORIDADE):
    Ultima opcao se ambas acima falharem
 
 META DO ID: 115% (1.15) - Consulta de CPF do cliente no sistema.
+
+CORRECOES v0.5.1:
+- REGRESSAO 1: Corrigidos graficos de Medias Moveis e Dia da Semana com escalas incompatíveis
+- REGRESSAO 2: Corrigido calculo de status da meta (usa ultimo valor acumulado, nao media)
 
 CORRECOES v0.5.0:
 - BUG 2: Corrigidas strings do menu lateral com emojis corretos
@@ -28,7 +32,7 @@ ATUALIZACOES v0.4.0:
 - Comparativo por Canal agora mostra cidades (SBC, Sao Paulo)
 
 Autor: Alex Paulo
-Versao: 0.5.0
+Versao: 0.5.1
 """
 
 import streamlit as st
@@ -77,6 +81,7 @@ from analytics import (
     get_best_worst_weekday,
     get_top_movers,
     prepare_variation_table,
+    _get_latest_values,  # CORRECAO v0.5.1: importado para REGRESSAO 2
 )
 
 # ============================================================================
@@ -628,10 +633,17 @@ def render_analise_horizontal(df_stores: pd.DataFrame, selected_stores: list):
 
 
 def render_dia_da_semana(df_stores: pd.DataFrame, selected_stores: list):
-    """Renderiza a secao de Analise por Dia da Semana."""
+    """Renderiza a secao de Analise por Dia da Semana.
+    
+    CORRECAO v0.5.1 - REGRESSAO 1:
+    - Dados agora sao variacao percentual diaria (desacumulados)
+    - Removida linha de meta META_ID (nao faz sentido para variacao diaria)
+    - Adicionada linha de referencia em 0% (baseline)
+    - Titulo e rotulos atualizados para refletir variacao diaria
+    """
     try:
         st.header("📅 Analise por Dia da Semana")
-        st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Agrupamento por dia da semana")
+        st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Variacao diaria media por dia da semana")
 
         df_weekday = analyze_by_weekday(df_stores)
 
@@ -641,26 +653,29 @@ def render_dia_da_semana(df_stores: pd.DataFrame, selected_stores: list):
                 go.Bar(
                     x=df_weekday.index,
                     y=df_weekday["media"],
-                    name="Media",
+                    name="Variacao Media",
                     marker_color=Colors.PRIMARY,
                     text=df_weekday["media"].apply(lambda x: f"{x*100:.1f}%"),
                     textposition="auto",
                 )
             )
 
+            # CORRECAO v0.5.1: Linha de referencia em 0% (baseline) em vez de META_ID
             fig.add_hline(
-                y=META_ID,
+                y=0,
                 line_dash="dash",
                 line_color=Colors.WARNING,
-                annotation_text=meta_label(),
+                annotation_text="Baseline (0%)",
+                annotation_position="top right",
                 annotation_font_color=Colors.WARNING,
             )
 
             fig.update_layout(_get_base_layout())
+            # CORRECAO v0.5.1: Titulo e rotulos atualizados
             fig.update_layout(
-                title=f"Indice Medio por Dia da Semana (Meta: {META_ID*100:.0f}%)",
+                title="Variacao Diaria Media por Dia da Semana",
                 xaxis_title="Dia da Semana",
-                yaxis_title="Indice de Atingimento",
+                yaxis_title="Variacao Diaria Media (%)",
                 height=LAYOUT_CONFIG["CHART_HEIGHT_SMALL"],
             )
 
@@ -746,10 +761,20 @@ def render_ranking(df_stores: pd.DataFrame):
 
 
 def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: list):
-    """Renderiza a secao de Medias Moveis e Tendencia."""
+    """Renderiza a secao de Medias Moveis e Tendencia.
+    
+    CORRECAO v0.5.1 - REGRESSAO 1:
+    - Graficos separados para serie original (acumulada) e medias moveis (desacumuladas)
+    - Removida linha de meta META_ID do grafico de medias moveis
+    - Titulos e rotulos atualizados para refletir natureza dos dados
+    
+    CORRECAO v0.5.1 - REGRESSAO 2:
+    - Status da meta agora usa ultimo valor acumulado (_get_latest_values)
+    - Nao usa mais media de todos os dias
+    """
     try:
         st.header("📉 Medias Moveis e Tendencia")
-        st.caption(f" Meta do ID: {META_ID*100:.0f}% | Suavizacao e regressao linear")
+        st.caption(f"🎯 Meta do ID: {META_ID*100:.0f}% | Suavizacao e regressao linear")
 
         stores_for_ma = [s for s in selected_stores if s in df_stores.index]
         if not stores_for_ma:
@@ -764,20 +789,49 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
                 index=0,
             )
 
-            fig = go.Figure()
-
-            fig.add_trace(
+            # CORRECAO v0.5.1 - REGRESSAO 1: Grafico 1 - Serie Original (Acumulada)
+            st.subheader(f"📈 Indice Acumulado - {loja_selecionada}")
+            st.caption("Indice de atingimento acumulado no mês (MTD)")
+            
+            fig_original = go.Figure()
+            fig_original.add_trace(
                 go.Scatter(
                     x=df_stores.columns,
                     y=df_stores.loc[loja_selecionada].values,
-                    mode="lines",
-                    name="Original",
-                    line=dict(color=Colors.TEXT_MUTED, width=1, dash="dot"),
+                    mode="lines+markers",
+                    name="Indice Acumulado",
+                    line=dict(color=Colors.PRIMARY, width=3),
+                    marker=dict(size=8),
                 )
             )
 
+            fig_original.add_hline(
+                y=META_ID,
+                line_dash="dash",
+                line_color=Colors.WARNING,
+                annotation_text=meta_label(),
+                annotation_position="top right",
+                annotation_font_color=Colors.WARNING,
+            )
+
+            fig_original.update_layout(_get_base_layout())
+            fig_original.update_layout(
+                title=f"Indice Acumulado MTD - {loja_selecionada}",
+                xaxis_title="Data",
+                yaxis_title="Indice de Atingimento (%)",
+                height=LAYOUT_CONFIG["CHART_HEIGHT"],
+            )
+
+            st.plotly_chart(fig_original, width='stretch')
+
+            # CORRECAO v0.5.1 - REGRESSAO 1: Grafico 2 - Medias Moveis (Desacumuladas)
+            st.subheader(f"📊 Variacao Diaria e Medias Moveis - {loja_selecionada}")
+            st.caption("Variacao percentual diaria com suavizacao por medias moveis")
+            
+            fig_ma = go.Figure()
+            
             if 3 in mas and loja_selecionada in mas[3].index:
-                fig.add_trace(
+                fig_ma.add_trace(
                     go.Scatter(
                         x=mas[3].columns,
                         y=mas[3].loc[loja_selecionada].values,
@@ -788,7 +842,7 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
                 )
 
             if 7 in mas and loja_selecionada in mas[7].index:
-                fig.add_trace(
+                fig_ma.add_trace(
                     go.Scatter(
                         x=mas[7].columns,
                         y=mas[7].loc[loja_selecionada].values,
@@ -798,24 +852,26 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
                     )
                 )
 
-            fig.add_hline(
-                y=META_ID,
+            # CORRECAO v0.5.1: Linha de referencia em 0% (baseline)
+            fig_ma.add_hline(
+                y=0,
                 line_dash="dash",
                 line_color=Colors.WARNING,
-                annotation_text=meta_label(),
+                annotation_text="Baseline (0%)",
+                annotation_position="top right",
                 annotation_font_color=Colors.WARNING,
             )
 
-            fig.update_layout(_get_base_layout())
-            fig.update_layout(
-                title=f"Medias Moveis - {loja_selecionada} (Meta: {META_ID*100:.0f}%)",
+            fig_ma.update_layout(_get_base_layout())
+            fig_ma.update_layout(
+                title=f"Medias Moveis da Variacao Diaria - {loja_selecionada}",
                 xaxis_title="Data",
-                yaxis_title="Indice de Atingimento",
+                yaxis_title="Variacao Diaria (%)",
                 height=LAYOUT_CONFIG["CHART_HEIGHT"],
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
 
-            # CORRECAO v0.4.1: width='stretch' em vez de use_container_width=True
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig_ma, width='stretch')
 
         st.markdown("---")
 
@@ -824,8 +880,9 @@ def render_medias_moveis_tendencia(df_stores: pd.DataFrame, selected_stores: lis
         if not df_trend.empty:
             st.subheader("📈 Analise de Tendencia (Regressao Linear)")
 
-            media_atual = df_stores.mean(axis=1)
-            df_trend["status_meta"] = media_atual.apply(
+            # CORRECAO v0.5.1 - REGRESSAO 2: Usar ultimo valor acumulado, nao media
+            indice_atual = _get_latest_values(df_stores)
+            df_trend["status_meta"] = indice_atual.apply(
                 lambda x: "✅ Acima" if x >= META_ID else "⚠️ Abaixo"
             )
 
